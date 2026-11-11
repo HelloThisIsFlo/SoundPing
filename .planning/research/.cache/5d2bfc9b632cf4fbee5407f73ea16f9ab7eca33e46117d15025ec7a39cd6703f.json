@@ -1,0 +1,1 @@
+{"content":"rtpMIDI over Wi-Fi: NIME 2019 measured 8.5 ms +/- 8.0 ms std dev (minimal ESP32 setup); vendors recommend Ethernet; Wi-Fi spikes tens of ms anecdotal; rtpMIDI implementations offer a latency/jitter buffer setting.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-11-11T18:51:22.984Z","ttl":86400000,"kind":"web"}

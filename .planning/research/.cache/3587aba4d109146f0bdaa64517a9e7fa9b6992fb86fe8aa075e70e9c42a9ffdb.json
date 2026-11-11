@@ -1,0 +1,1 @@
+{"content":"AVAudioEngine tap AVAudioTime hostTime is mach host time but tap semantics (buffer start/end, latency included?) undocumented; macOS has no AVAudioSession latency props; prefer HAL IOProc/AUHAL for timing-critical capture.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-11-11T18:49:37.996Z","ttl":86400000,"kind":"web"}
