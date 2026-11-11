@@ -42,11 +42,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Every run is saved with its metadata (devices, sample rate, buffer, recipe, date), a label and tags, and the round trip is stored as a calibration for that device pair, sample rate and buffer, labelled "round trip" and never applied as "mic delay"
   4. Broken setups stop with a named cause: missing mic permission (naming the terminal app that owns it), silent or clipping input, or a device that disappears or changes sample rate or buffer mid-run; `--simulate` runs the recipe with no gear, recovers the injected latency and jitter, and runs in CI
   5. Exit gates before Phase 2: the host-clock self-test passes (sample-count and host-clock paths agree within ~2 samples), and the repo carries its chosen open-source licence before any ported code lands (the licence part of REL-04)
-**Plans**: 9 plans
+**Plans**: 10 plans
 
 Plans:
 - [ ] 01-01-PLAN.md — Licensed, buildable repo: PolyForm Shield LICENSE first, SwiftPM scaffold + CI, CLA (Flo picks fill-ins), CONTRIBUTING, README
-- [ ] 01-02-PLAN.md — Walking skeleton: `soundping run round-trip --simulate --json` → run.json, CI; labels/tags, safe run folders, lock, `runs list/show`
+- [ ] 01-02-PLAN.md — Walking skeleton: `soundping run round-trip --simulate --json` → run.json, seeded spacing + warm-ups, CI on every push
 - [ ] 01-03-PLAN.md — Live output for agents and humans: `--ndjson`, pretty TTY (hits, histogram, sparkline), error envelope + exit codes
 - [ ] 01-04-PLAN.md — Detector and stats rigor: named rejections, first-peak/PSR/confidence, chirp bands + click + down-sweeps, numpy-matched stats
 - [ ] 01-05-PLAN.md — Devices and selection: `devices`/`recipes`/`paths`, one resolver + named setups, no implicit defaults, reported-latency math
@@ -54,6 +54,7 @@ Plans:
 - [ ] 01-07-PLAN.md — Real hardware round trip: raw HAL IOProc (`@_noLocks`), per-process buffer, abort on device change
 - [ ] 01-08-PLAN.md — Preflight: mic permission naming the owning app, level ramp + lock, silent/clipping/ceiling/muted causes, `--in-channel auto`
 - [ ] 01-09-PLAN.md — Bench exit gate: repeatability + clock self-test on the Scarlett, Flo picks the headline value, licence wording sweep
+- [ ] 01-10-PLAN.md — Run store (wave 3, split from 01-02): labels/tags, collision-safe run folders, run lock, `runs list/show`, contract tests
 **Notes**: Research flag: HAL timestamp edge, safety-offset arithmetic and real-time safety need on-hardware spikes. Drift checks for two-device recipes arrive in Phase 3 (CAL-04).
 
 ### Phase 2: Tool-Sent MIDI

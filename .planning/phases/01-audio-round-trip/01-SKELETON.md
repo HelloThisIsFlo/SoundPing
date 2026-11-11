@@ -35,13 +35,13 @@
 
 - [ ] Project scaffold: `Package.swift` (exact pins, committed `Package.resolved`), Swift Testing, `justfile`, `.gitignore` (plan 01-01)
 - [ ] Routing: the `soundping run <recipe>` subcommand with the shared `@OptionGroup` flags (plan 01-02)
-- [ ] Data layer: a real write (`run.json` per run) and a real read (`soundping runs list/show`), both plan 01-02
+- [ ] Data layer: a real write (`run.json` per run, plan 01-02) and a real read (`soundping runs list/show`, plan 01-10)
 - [ ] UI: the CLI invocation prints the result (`--json` in 01-02; live `--ndjson` and pretty TTY in 01-03)
 - [ ] Deployment: CI on `macos-26` runs `swift test` + the simulated round trip on every push (plans 01-01, 01-02)
 
 ## Out of Scope (Deferred to Later Slices)
 
-- Inside Phase 1, later plans: live/pretty output and error envelope (01-03), detector/stats rigor (01-04), device listing + selection (01-05), clock self-test + reported vs measured + calibrations (01-06), the real HAL backend (01-07), preflight + level ramp (01-08), bench gate (01-09)
+- Inside Phase 1, later plans: labels/tags, collision-safe folders, run lock, `runs list/show` and contract tests (01-10), live/pretty output and error envelope (01-03), detector/stats rigor (01-04), device listing + selection (01-05), clock self-test + reported vs measured + calibrations (01-06), the real HAL backend (01-07), preflight + level ramp (01-08), bench gate (01-09)
 - Later phases: tool-sent MIDI (Phase 2), raw audio snippets + export + run comparison (Phase 3), key press (Phase 4), transports (Phase 5), native app (Phase 6), signed release (Phase 7)
 - Deferred ideas (CONTEXT.md): adaptive stopping, multi-sine precision loopback, a `calibrate` alias
 
