@@ -110,11 +110,58 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| ENG-01 | Phase 1 | Pending |
+| ENG-02 | Phase 1 | Pending |
+| ENG-03 | Phase 1 | Pending |
+| ENG-07 | Phase 1 | Pending |
+| ENG-04 | Phase 1 | Pending |
+| ENG-05 | Phase 1 | Pending |
+| ENG-06 | Phase 1 | Pending |
+| RES-01 | Phase 1 | Pending |
+| RES-02 | Phase 1 | Pending |
+| RES-03 | Phase 2 | Pending |
+| RES-04 | Phase 4 | Pending |
+| RES-05 | Phase 2 | Pending |
+| CAL-01 | Phase 1 | Pending |
+| CAL-02 | Phase 1 | Pending |
+| CAL-03 | Phase 1 | Pending |
+| CAL-04 | Phase 3 | Pending |
+| MIDI-01 | Phase 2 | Pending |
+| MIDI-02 | Phase 2 | Pending |
+| MIDI-03 | Phase 2 | Pending |
+| MIDI-04 | Phase 2 | Pending |
+| KEY-01 | Phase 4 | Pending |
+| KEY-02 | Phase 4 | Pending |
+| KEY-03 | Phase 4 | Pending |
+| TRAN-01 | Phase 5 | Pending |
+| TRAN-04 | Phase 5 | Pending |
+| TRAN-02 | Phase 5 | Pending |
+| TRAN-03 | Phase 5 | Pending |
+| RUN-01 | Phase 1 | Pending |
+| RUN-02 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Pending |
+| RUN-04 | Phase 3 | Pending |
+| OUT-01 | Phase 3 | Pending |
+| OUT-02 | Phase 3 | Pending |
+| APP-01 | Phase 6 | Pending |
+| APP-02 | Phase 6 | Pending |
+| APP-03 | Phase 6 | Pending |
+| APP-04 | Phase 6 | Pending |
+| APP-05 | Phase 6 | Pending |
+| REL-01 | Phase 7 | Pending |
+| REL-02 | Phase 7 | Pending |
+| REL-03 | Phase 7 | Pending |
+| REL-04 | Phase 7 | Pending |
+
+**Notes:**
+- REL-04: the licence is chosen in Phase 1 (exit gate, before any ported code lands); NOTICE, README and per-recipe guides complete in Phase 7
+- TRAN-04, TRAN-02: ship only if the TRAN-01 spike passes; otherwise they move to Out of Scope with the measured floor as the reason
 
 **Coverage:**
 - v1 requirements: 42 total
-- Mapped to phases: 0 (pending roadmap)
+- Mapped to phases: 42
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-11*
-*Last updated: 2026-11-11 after initial definition*
+*Last updated: 2026-11-11 after roadmap creation*
