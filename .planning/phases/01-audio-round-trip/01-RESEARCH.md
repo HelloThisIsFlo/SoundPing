@@ -712,20 +712,20 @@ func percentile(_ sorted: [Double], _ p: Double) -> Double {   // linear interpo
 | A7 | Per-process buffer also holds while devices run (tested with device idle) | P1 | `--buffer` might affect other apps; verify on bench with Ableton open |
 | A8 | Spacing 400–700 ms and window 350 ms defaults | P6 | Overlapping windows on slow outputs |
 
-## ❓ Open Questions
+## ❓ Open Questions (RESOLVED)
 
-1. **🔁 Probe phase vs "warm-ups double as probes" (D-14)**
+1. **🔁 Probe phase vs "warm-ups double as probes" (D-14)** (RESOLVED: plan 01-08 builds a separate, uncounted `probe` phase, then the 5 declared warm-ups at the locked level; Flo can veto at plan review; plan 01-09 Task 3 records it in PROJECT.md Key Decisions)
    - What we know: −48 → −6 dBFS takes up to 7 probe hits; D-04 declares 5 warm-ups.
    - Unclear: should probes count as warm-ups when the ramp finishes early?
    - Recommendation: separate `probe` phase (not counted) + 5 warm-ups at the locked level. Confirm with Flo at plan review.
-2. **🎯 Which number is "the" round trip?**
+2. **🎯 Which number is "the" round trip?** (RESOLVED: plan 01-06 makes `appRoundTrip` the provisional headline; Flo picks the final one at plan 01-09's Task 2 decision checkpoint, with bench numbers in hand)
    - What we know: `path` and `appRoundTrip` are both measurable.
    - Recommendation: headline + calibration = `appRoundTrip` (comparable to RTL Utility / DAW figures), with `path` shown beside it. Confirm after the bench.
-3. **🔐 Terminal.app has no mic usage string**
+3. **🔐 Terminal.app has no mic usage string** (RESOLVED: plan 01-08's preflight bounds the outcome under any host app, either a prompt attributed to it or `micPermissionDenied` naming it, never silent hits; which of the two Terminal.app gives is a human check in plan 01-09 Task 3, and its answer feeds the Terminal.app line in Phase 7's install docs)
    - Unclear whether TCC prompts for CLIs under Terminal.app. Low impact (Flo uses Ghostty); note it in docs later.
-4. **📜 CLA template wording**
+4. **📜 CLA template wording** (RESOLVED: Flo picks the template and fill-ins at plan 01-01's Task 2 decision checkpoint; plan 01-01 Task 3 queues his read-through of CLA.md as a human check)
    - Harmony Option Five also requires licensing contributions under the project's licence at submission (Shield). That is compatible with D-17. Flo reviews the final CLA.md (human checkpoint).
-5. **🧾 `Licensor Line of Business:` omission**
+5. **🧾 `Licensor Line of Business:` omission** (RESOLVED: omitted per D-17; plan 01-01 Task 1's LICENSE gate asserts no `Licensor Line of Business:` line after the licence text)
    - The field exists [VERIFIED: Shield text, "Discontinued Products"]. Omitting it means: if Flo stops providing SoundPing, others may compete with that discontinued product. This matches D-17's deliberate choice; surface it once at plan review.
 
 ## 🧪 Environment Availability
