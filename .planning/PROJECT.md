@@ -2,7 +2,7 @@
 
 ## What This Is
 
-SoundPing is a personal tool for Flo that measures where the latency in his music setup comes from. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
+SoundPing is an open-source tool for musicians and audio tinkerers that measures where the latency in their music setup comes from. It started from Flo's own setup, which remains the first test bench. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
 
 ## Core Value
 
@@ -29,7 +29,7 @@ Trustworthy, comparable latency numbers for each segment of the chain (MIDI tran
 ### Out of Scope
 
 - Injected Mac keypress as a trigger (the original README idea) — deferred: tool-sent MIDI measures the same segment with cleaner timing; revisit only if a keyboard-to-MIDI path itself needs measuring
-- Sharing or publishing results / multi-user use — personal tool for Flo's own setup
+- Hosted service, accounts or online result sharing — SoundPing runs locally on the user's own machine; results stay local (exporting them is fine)
 - Automatically fixing or tuning the setup (buffer sizes, routing) — SoundPing measures; Flo decides
 
 ## Context
@@ -44,10 +44,13 @@ Trustworthy, comparable latency numbers for each segment of the chain (MIDI tran
   - Every mic measurement includes the mic's own input delay (converter + input buffer). The calibration measures it so it can be subtracted.
   - With headphones, the sound must reach the mic (ear cup held to the MacBook) or go through loopback.
 - **Platform:** macOS (MacBook built-in mic), Ableton Live.
+- **Audience:** open source, for anyone who wants to measure their latency. Flo's setup is the first test bench, not the only target, so nothing is hard-wired to his gear (device names, Ableton set, ports).
 
 ## Constraints
 
-- **Platform**: macOS only — it's Flo's machine, and CoreAudio/CoreMIDI timing is the point
+- **Platform**: macOS first — CoreAudio/CoreMIDI timing is the point; other OSes aren't ruled out, but not in milestone 1
+- **Open source**: usable by strangers. Devices, MIDI ports and the DAW (Ableton is the reference, not a requirement) are configurable; installing and running it is documented; licence chosen before the first public release
+- **DAW-agnostic**: tool-sent MIDI tests work with any app that turns a MIDI note into sound
 - **Accuracy**: timing must be traceable to the audio sample clock; a number that hides an uncorrected offset (e.g. mic delay) is worse than no number
 - **Evolvability**: start as a quick CLI but built around a shared engine, so new recipes and the web UI plug in without rewrites
 - **Best-practice stats**: many hits per run, median + jitter, not a single sample
@@ -61,6 +64,7 @@ Trustworthy, comparable latency numbers for each segment of the chain (MIDI tran
 | CLI first, speed-test web UI later in milestone 1 | Quick to get numbers; web UI is wanted within the first milestone but not as phase 1 | — Pending |
 | Report median + jitter + graph over N hits | Best practice; jitter matters as much as the average for playing feel | — Pending |
 | Defer injected Mac keypress trigger | Tool-sent MIDI measures the same segment with cleaner timing | — Pending |
+| Open source, for anyone, not just Flo | Flo's call: no reason it should only serve his setup | — Pending |
 
 ## Evolution
 
