@@ -61,6 +61,7 @@ private struct Session: Sendable {
     try HitScheduler.validate(parameters, templateDurationMs: nominal.durationMs)
     // A store file this build cannot read fails the run now, before any audio, not after it (T-01-21).
     _ = try ClockSelfTestStore.load(from: store.paths.clockSelfTest)
+    _ = try CalibrationStore.load(from: store.paths.calibrations)
 
     let result: RunResult
     do {
@@ -340,6 +341,8 @@ private struct Session: Sendable {
       reported: reported)
 
     result.runPath = folder.path
+    result.calibration = try storeCalibration(
+      figures: figures, info: info, runId: runId, createdAt: createdAt)
     if let selfTest {
       let key = ClockSelfTestKey(
         deviceUID: request.setup.output.uid, sampleRate: info.sampleRate,
@@ -350,6 +353,34 @@ private struct Session: Sendable {
     }
     try store.write(result, to: folder)
     return result
+  }
+
+  /// A run that passes the valid-hit gate leaves a round-trip calibration keyed by its whole path
+  /// (CAL-02); one that does not leaves nothing, and its result says so. The calibration is a
+  /// measurement kept for later comparison. It is never subtracted from anything (ENG-06).
+  private func storeCalibration(
+    figures: Measured, info: BackendInfo, runId: String, createdAt: Date
+  ) throws -> CalibrationRef {
+    let setup = request.setup
+    let key = CalibrationKey(
+      outputUID: setup.output.uid, outChannels: setup.outChannels, inputUID: setup.input.uid,
+      inChannel: setup.inChannel, sampleRate: info.sampleRate, bufferFrames: info.bufferFrames)
+
+    let path = figures.path
+    let headline = figures.headlineStats
+    guard let path, let headline, let value = headline.median, let pathMedian = path.median,
+      path.valid >= request.parameters.requiredValidHits
+    else {
+      return CalibrationRef(key: key, stored: false)
+    }
+    try CalibrationStore.record(
+      CalibrationRecord(
+        key: key, headline: figures.headline, valueFrames: value.frames, valueMs: value.ms,
+        pathFrames: pathMedian.frames, appRoundTripFrames: figures.appRoundTrip?.median?.frames,
+        jitterFrames: headline.jitter?.frames ?? 0, valid: path.valid, n: path.n,
+        domain: figures.domain, runId: runId, measuredAt: createdAt),
+      in: store.paths.calibrations)
+    return CalibrationRef(key: key, stored: true)
   }
 
   private static func operatingSystem() -> String {

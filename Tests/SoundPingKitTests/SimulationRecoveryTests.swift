@@ -107,7 +107,10 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
     let elapsed = clock.now - start
 
     #expect(result.hits.count == 105)
-    #expect(elapsed < .seconds(2))
+    // The point is that virtual time never sleeps: 105 hits spaced 450-750 ms would take a minute
+    // of wall clock. The bound is generous because `swift test` runs every suite in parallel and
+    // this run shares the CPU with them (a bare run takes about half a second in a debug build).
+    #expect(elapsed < .seconds(10))
   }
 
   @Test func aVanishedDeviceAbortsTheRun() async throws {

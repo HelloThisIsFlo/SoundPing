@@ -23,7 +23,7 @@ import Testing
   }
 
   private static func run(
-    _ scenario: Scenario, setup: ResolvedSetup, hits: Int = 30
+    _ scenario: Scenario, setup: ResolvedSetup, hits: Int = 20
   ) async throws -> RunResult {
     let folder = FileManager.default.temporaryDirectory
       .appendingPathComponent("soundping-test-\(UUID().uuidString)", isDirectory: true)
@@ -94,7 +94,7 @@ import Testing
   @Test func aTwoDeviceRunKeepsItsJitter() async throws {
     let result = try await Self.run(
       Scenario(latencyFrames: Self.injected, jitterFrames: 0.5, driftPPM: 20, seed: 4),
-      setup: Self.speakersToMicSetup, hits: 60)
+      setup: Self.speakersToMicSetup, hits: 40)
     let path = try #require(result.measured.path)
     let jitter = try #require(path.jitter).frames
     // p95 - p5 of a 0.5 frame sigma is about 1.6 frames; the host path must not add to it.

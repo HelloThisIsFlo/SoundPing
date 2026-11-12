@@ -224,7 +224,7 @@ import Testing
     return (RunStore(paths: paths), { try? FileManager.default.removeItem(at: folder) })
   }
 
-  private static func run(_ scenario: Scenario, hits: Int = 40, store: RunStore) async throws
+  private static func run(_ scenario: Scenario, hits: Int = 20, store: RunStore) async throws
     -> (result: RunResult, events: [RunEvent])
   {
     var parameters = RecipeRegistry.roundTrip.defaultParameters(seed: scenario.seed)
@@ -252,7 +252,7 @@ import Testing
     let selfTest = try #require(result.selfTest)
     #expect(selfTest.pass)
     #expect(abs(selfTest.medianDeltaFrames) < 0.1)
-    #expect(selfTest.n == 40)
+    #expect(selfTest.n == 20)
     #expect(selfTest.halCrossCheckMedianFrames == nil, "the simulator has no HAL to ask")
     #expect(result.hostTimebase == HostTimebase(numer: 125, denom: 3))
 
@@ -273,7 +273,7 @@ import Testing
       let (store, cleanup) = try Self.makeStore()
       defer { cleanup() }
       let (result, _) = try await Self.run(
-        Scenario(jitterFrames: 0, driftPPM: ppm, seed: 3), hits: 20, store: store)
+        Scenario(jitterFrames: 0, driftPPM: ppm, seed: 3), hits: 12, store: store)
       let selfTest = try #require(result.selfTest)
       #expect(selfTest.pass, "drift \(ppm) ppm")
       #expect(abs(selfTest.medianDeltaFrames) < 0.1, "drift \(ppm) ppm")

@@ -30,12 +30,28 @@ assert abs(path["median"]["frames"] - 412.37) <= 0.1, path["median"]
 assert path["valid"] == 100 and path["n"] == 100, (path["valid"], path["n"])
 assert os.path.isabs(r["runPath"]) and os.path.isdir(r["runPath"]), r["runPath"]
 assert r["corrections"] == [], r["corrections"]
+# Measured next to reported (RES-02): the simulated duplex runs 2 x 128 + 28 frames of I/O offset
+# ahead, so the headline app round trip is the path plus that; a passing run stores a calibration.
+assert r["measured"]["domain"] == "sample" and r["measured"]["headline"] == "appRoundTrip", r["measured"]
+assert abs(r["measured"]["ioOffset"]["median"]["frames"] - 284) < 0.001, r["measured"]["ioOffset"]
+assert abs(r["measured"]["appRoundTrip"]["median"]["frames"] - (412.37 + 284)) <= 0.1, r["measured"]
+assert r["reported"]["source"] == "halReported", r["reported"]
+assert r["calibration"]["stored"] is True and r["calibration"]["label"] == "round trip", r["calibration"]
 ids = [s["id"] for s in r["segments"]]
 assert ids == ["audioOutput", "transmission", "audioInput"], ids
 print(r["runPath"])
 ' "$OUT")"
 
 cmp "$OUT" "$RUN_PATH/run.json"
+
+python3 -c '
+import json, sys
+file = json.load(open(sys.argv[1] + "/calibrations.json"))
+assert file["schemaVersion"] == 1 and len(file["calibrations"]) == 1, file
+record = file["calibrations"][0]
+assert record["kind"] == "roundTrip" and record["label"] == "round trip", record
+assert record["key"]["sampleRate"] == 48000 and record["key"]["bufferFrames"] == 128, record["key"]
+' "$STORE"
 
 # --ndjson (D-03): every stdout line is one JSON event, armed first, finished last, the 25
 # hit/rejected lines (5 warm-ups + 20 measured) in strictly increasing index order, and the

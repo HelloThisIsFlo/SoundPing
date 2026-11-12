@@ -244,8 +244,8 @@ import Testing
   @Test func theSameSetupRunTwiceKeepsOneRecordAndADifferentSetupAddsAnother() async throws {
     let (store, cleanup) = try Self.makeStore()
     defer { cleanup() }
-    let first = try await Self.run(Scenario(jitterFrames: 0, seed: 1), store: store)
-    let second = try await Self.run(Scenario(jitterFrames: 0, seed: 2), store: store)
+    let first = try await Self.run(Scenario(jitterFrames: 0, seed: 1), hits: 10, store: store)
+    let second = try await Self.run(Scenario(jitterFrames: 0, seed: 2), hits: 10, store: store)
     var file = try CalibrationStore.load(from: store.paths.calibrations)
     #expect(file.calibrations.count == 1)
     #expect(file.calibrations.first?.runId == second.runId)
@@ -253,7 +253,8 @@ import Testing
 
     var otherChannel = Self.scarlett
     otherChannel.inChannel = 8
-    _ = try await Self.run(Scenario(jitterFrames: 0, seed: 3), setup: otherChannel, store: store)
+    _ = try await Self.run(
+      Scenario(jitterFrames: 0, seed: 3), setup: otherChannel, hits: 10, store: store)
     file = try CalibrationStore.load(from: store.paths.calibrations)
     #expect(file.calibrations.count == 2, "input channel 7 and 8 are different keys")
   }

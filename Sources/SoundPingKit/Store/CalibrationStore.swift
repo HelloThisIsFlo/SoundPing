@@ -111,16 +111,30 @@ public struct CalibrationFile: Codable, Sendable, Equatable {
 }
 
 public enum CalibrationStore {
-  /// A missing file is an empty one.
+  /// A missing file is an empty one. Another schemaVersion or malformed JSON is a usage error that
+  /// names the file, never a crash (T-01-21, ASVS V5).
   public static func load(from url: URL) throws -> CalibrationFile {
-    CalibrationFile()
+    try VersionedFile.load(
+      CalibrationFile.self, from: url, supportedVersion: CalibrationFile.currentSchemaVersion,
+      errorCode: "calibrationsUnreadable", noun: "calibrations") ?? CalibrationFile()
   }
 
   /// Stores `record`, replacing the earlier record of the same key; every other key is untouched.
-  public static func record(_ record: CalibrationRecord, in url: URL) throws {}
+  /// Records keep first-seen order, so a refresh does not reshuffle the file. A file this build
+  /// cannot read is never overwritten.
+  public static func record(_ record: CalibrationRecord, in url: URL) throws {
+    var file = try load(from: url)
+    if let index = file.calibrations.firstIndex(where: { $0.key == record.key }) {
+      file.calibrations[index] = record
+    } else {
+      file.calibrations.append(record)
+    }
+    try VersionedFile.save(
+      file, to: url, errorCode: "calibrationsUnwritable", noun: "calibrations")
+  }
 
   public static func calibration(for key: CalibrationKey, in url: URL) throws -> CalibrationRecord?
   {
-    nil
+    try load(from: url).calibrations.first { $0.key == key }
   }
 }
