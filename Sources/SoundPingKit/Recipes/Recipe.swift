@@ -4,19 +4,16 @@ public struct Recipe: Sendable, Equatable {
   public let version: Int
   public let title: String
   public let summary: String
-  public let startLevelDbfs: Double
   /// Segments in signal-flow order (ENG-06). Listed separately, never merged.
   public let segments: [Segment]
 
   public init(
-    id: String, version: Int, title: String, summary: String, startLevelDbfs: Double,
-    segments: [Segment]
+    id: String, version: Int, title: String, summary: String, segments: [Segment]
   ) {
     self.id = id
     self.version = version
     self.title = title
     self.summary = summary
-    self.startLevelDbfs = startLevelDbfs
     self.segments = segments
   }
 
@@ -35,7 +32,6 @@ public enum RecipeRegistry {
     title: "Audio round trip",
     summary:
       "Plays a chirp out of the output device and listens on the input device, then measures the delay.",
-    startLevelDbfs: -30,
     segments: [
       Segment(id: "audioOutput", name: "Audio output (driver, converter, output device)"),
       Segment(id: "transmission", name: "Cable or air between output and input"),

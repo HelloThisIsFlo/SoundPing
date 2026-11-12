@@ -19,7 +19,8 @@ struct RecipesCommand: AsyncParsableCommand {
     var spacingMaxMs: Double
     var maxLatencyMs: Double
     var templateId: String
-    var startLevelDbfs: Double
+    /// Where the level ramp starts when `--level` is not given (the engine's real first probe).
+    var rampStartLevelDbfs: Double
     var minValidFraction: Double
   }
 
@@ -49,7 +50,7 @@ struct RecipesCommand: AsyncParsableCommand {
             hits: parameters.hits, warmup: parameters.warmup,
             spacingMinMs: parameters.spacingMinMs, spacingMaxMs: parameters.spacingMaxMs,
             maxLatencyMs: parameters.maxLatencyMs, templateId: parameters.templateId,
-            startLevelDbfs: recipe.startLevelDbfs, minValidFraction: parameters.minValidFraction))
+            rampStartLevelDbfs: LevelRamp.firstProbeDbfs, minValidFraction: parameters.minValidFraction))
       }
       if json {
         try writeJSONLine(Envelope(recipes: entries))
@@ -59,7 +60,7 @@ struct RecipesCommand: AsyncParsableCommand {
           print("  \(entry.summary)")
           print("  segments: \(entry.segments.map(\.id).joined(separator: " -> "))")
           print(
-            "  defaults: \(entry.defaults.hits) hits, \(entry.defaults.warmup) warm-ups, spacing \(Int(entry.defaults.spacingMinMs))-\(Int(entry.defaults.spacingMaxMs)) ms, start level \(Int(entry.defaults.startLevelDbfs)) dBFS"
+            "  defaults: \(entry.defaults.hits) hits, \(entry.defaults.warmup) warm-ups, spacing \(Int(entry.defaults.spacingMinMs))-\(Int(entry.defaults.spacingMaxMs)) ms, level ramp starts at \(Int(entry.defaults.rampStartLevelDbfs)) dBFS"
           )
         }
       }
