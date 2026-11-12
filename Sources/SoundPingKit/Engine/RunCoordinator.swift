@@ -441,8 +441,15 @@ private struct Session: Sendable {
       preflight: preflight)
 
     result.runPath = folder.path
-    result.calibration = try storeCalibration(
+    let calibration = calibrationToStore(
       figures: figures, info: info, runId: runId, createdAt: createdAt)
+    result.calibration = calibration.ref
+    // run.json goes first: if it cannot be written, no calibration or self-test record is left
+    // pointing at a run that does not exist (WR-02).
+    try store.write(result, to: folder)
+    if let record = calibration.record {
+      try CalibrationStore.record(record, in: store.paths.calibrations)
+    }
     if let selfTest {
       let key = ClockSelfTestKey(
         deviceUID: request.setup.output.uid, sampleRate: info.sampleRate,
@@ -451,16 +458,16 @@ private struct Session: Sendable {
         ClockSelfTestEntry(key: key, result: selfTest, runId: runId, measuredAt: createdAt),
         in: store.paths.clockSelfTest)
     }
-    try store.write(result, to: folder)
     return result
   }
 
   /// A run that passes the valid-hit gate leaves a round-trip calibration keyed by its whole path
-  /// (CAL-02); one that does not leaves nothing, and its result says so. The calibration is a
+  /// (CAL-02); one that does not leaves nothing, and its result says so. This only decides; the
+  /// caller writes the record once run.json is safely on disk. The calibration is a
   /// measurement kept for later comparison. It is never subtracted from anything (ENG-06).
-  private func storeCalibration(
+  private func calibrationToStore(
     figures: Measured, info: BackendInfo, runId: String, createdAt: Date
-  ) throws -> CalibrationRef {
+  ) -> (ref: CalibrationRef, record: CalibrationRecord?) {
     let setup = request.setup
     let key = CalibrationKey(
       outputUID: setup.output.uid, outChannels: setup.outChannels, inputUID: setup.input.uid,
@@ -471,16 +478,14 @@ private struct Session: Sendable {
     guard let path, let headline, let value = headline.median, let pathMedian = path.median,
       path.valid >= request.parameters.requiredValidHits
     else {
-      return CalibrationRef(key: key, stored: false)
+      return (CalibrationRef(key: key, stored: false), nil)
     }
-    try CalibrationStore.record(
-      CalibrationRecord(
-        key: key, headline: figures.headline, valueFrames: value.frames, valueMs: value.ms,
-        pathFrames: pathMedian.frames, appRoundTripFrames: figures.appRoundTrip?.median?.frames,
-        jitterFrames: headline.jitter?.frames ?? 0, valid: path.valid, n: path.n,
-        domain: figures.domain, runId: runId, measuredAt: createdAt),
-      in: store.paths.calibrations)
-    return CalibrationRef(key: key, stored: true)
+    let record = CalibrationRecord(
+      key: key, headline: figures.headline, valueFrames: value.frames, valueMs: value.ms,
+      pathFrames: pathMedian.frames, appRoundTripFrames: figures.appRoundTrip?.median?.frames,
+      jitterFrames: headline.jitter?.frames ?? 0, valid: path.valid, n: path.n,
+      domain: figures.domain, runId: runId, measuredAt: createdAt)
+    return (CalibrationRef(key: key, stored: true), record)
   }
 
   private static func operatingSystem() -> String {
