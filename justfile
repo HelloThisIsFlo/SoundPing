@@ -12,6 +12,10 @@ test:
 cli *ARGS:
     scripts/cli.sh {{ARGS}}
 
+# Run a simulated round trip, e.g. `just sim --json --seed 7`
+sim *ARGS:
+    scripts/cli.sh run round-trip --simulate {{ARGS}}
+
 # Format Sources and Tests in place
 fmt:
     swift format --in-place --recursive Sources Tests

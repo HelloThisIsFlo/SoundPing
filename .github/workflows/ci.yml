@@ -18,5 +18,7 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+      - name: Simulated round trip
+        run: bash scripts/ci-sim.sh
       - name: CLI smoke
         run: swift run soundping --version
