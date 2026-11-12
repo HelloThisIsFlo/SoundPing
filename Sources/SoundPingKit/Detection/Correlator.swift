@@ -31,6 +31,9 @@ public struct Correlator: Sendable {
     let lags = window.count - p + 1
     guard p > 0, lags >= 3 else { return .rejected(.outsideWindow) }
 
+    // The device lost frames inside this window: whatever the filter would find is not a latency.
+    if Self.hasDiscontinuity(stamps) { return .rejected(.discontinuity) }
+
     // Positive filter stride = correlation: corr[j] = sum_p window[j + p] * template[p].
     var corr = [Float](repeating: 0, count: lags)
     vDSP_conv(window, 1, template.samples, 1, &corr, 1, vDSP_Length(lags), vDSP_Length(p))
@@ -45,6 +48,9 @@ public struct Correlator: Sendable {
     guard peak > 0 else { return .rejected(.noPeak) }
     let i = Int(peakIndex)
     guard i > 0, i < lags - 1 else { return .rejected(.outsideWindow) }
+
+    // A flat-topped template means the converter saturated and the shape, hence the peak, is wrong.
+    if Self.isClipped(window, from: i, count: p) { return .rejected(.clipped) }
 
     // Normalised correlation at the integer peak: gain-invariant, 0...1.
     var segmentEnergy: Float = 0
@@ -72,4 +78,32 @@ public struct Correlator: Sendable {
       psr: nil,
       peakAbs: segmentPeak)
   }
+
+  /// Sample times of consecutive callbacks must continue each other. Compared in Double with half
+  /// a frame of tolerance (ENG-07): a real clock reports whole frames, so anything larger is a gap.
+  static func hasDiscontinuity(_ stamps: [CallbackStamp]) -> Bool {
+    for (previous, next) in zip(stamps, stamps.dropFirst()) {
+      let expected = previous.inputSampleTime + Double(previous.frames)
+      if abs(next.inputSampleTime - expected) > discontinuityToleranceFrames { return true }
+    }
+    return false
+  }
+
+  /// Three or more consecutive samples at full scale in the span the template was matched to.
+  static func isClipped(_ window: [Float], from start: Int, count: Int) -> Bool {
+    var run = 0
+    for index in start..<Swift.min(window.count, start + count) {
+      if abs(window[index]) >= clipLevel {
+        run += 1
+        if run >= clipRunLength { return true }
+      } else {
+        run = 0
+      }
+    }
+    return false
+  }
+
+  static let discontinuityToleranceFrames = 0.5
+  static let clipLevel: Float = 0.999
+  static let clipRunLength = 3
 }
