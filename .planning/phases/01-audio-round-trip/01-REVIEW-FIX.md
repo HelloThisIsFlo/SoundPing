@@ -1,31 +1,159 @@
 ---
 phase: 01-audio-round-trip
-fixed_at: 2026-11-12T18:30:00Z
+fixed_at: 2026-11-12T19:07:27Z
 review_path: .planning/phases/01-audio-round-trip/01-REVIEW.md
-iteration: 2
-findings_in_scope: 13
-fixed: 11
-skipped: 2
+iteration: 3
+findings_in_scope: 18
+fixed: 15
+skipped: 3
 status: partial
 ---
 
 # Phase 01: Code Review Fix Report
 
-**Fixed at:** 2026-11-12T18:30:00Z
+**Fixed at:** 2026-11-12T19:07:27Z
 **Source review:** .planning/phases/01-audio-round-trip/01-REVIEW.md
-**Iteration:** 2
+**Iteration:** 3
 
-**Summary:**
-- Findings in scope: 13 (2 critical, 11 warning; `fix_scope: critical_warning`)
-- Fixed: 11 (8 in iteration 1, WR-04, WR-05 and WR-08 in iteration 2 after the maintainer decided them)
-- Skipped: 2 (WR-01, WR-03)
-- Info findings (IN-01..IN-09) are out of scope and remain open in REVIEW.md.
+**Summary (this iteration, against the second full review):**
+- Findings in scope: 18 (1 critical, 4 warning including IN-02 which was raised to Warning, 13 info; `fix_scope: all`, the maintainer asked for every finding)
+- Fixed: 15 (CR-03, WR-12, IN-02, IN-01, IN-03..IN-07, IN-09..IN-14), one commit each
+- Skipped: 3 (WR-01, WR-03, IN-08): deferred to planned change (maintainer decision). All three rework the real-time stamp and glitch recording in the IOProc, and go into a separate planned change right after this one. The RTState stamp ring, IOCycle stamping and the HitListener overload check were left alone beyond what the other findings strictly needed.
+- Ledger across all iterations: 26 findings fixed (11 in iterations 1 and 2: CR-01, CR-02, WR-02, WR-04..WR-11; 15 in iteration 3), 3 deferred (WR-01, WR-03, IN-08).
 
-**Verification (iteration 2):** ran in an isolated worktree (`.claude/worktrees/rf-01-50604-1794503850`): `swift build`, `swift test` and `scripts/ci-sim.sh` before every commit, then once more in the main checkout after the fast-forward (255 tests in the kit target, 41 in the CLI target, `ci-sim: OK`). The three commits were rebased onto `ccc9be9` (a docs-only commit that landed on main meanwhile) before the fast-forward, so the hashes below are the post-rebase ones. Hardware tests (`just hw-test`, `just bench`) were NOT run, so the HAL paths of WR-04 and WR-05 (per-device buffer read, `'fsiz'` baseline re-arming) are covered only by the simulator and a unit test of the baseline logic, not by a real device.
+**Verification (iteration 3):**
+- **Where it ran:** an isolated worktree (`.claude/worktrees/rf-01-7932-1794509161`, branch `gsd-reviewfix/01-7932`). `swift build`, `swift test` and `scripts/ci-sim.sh` ran before every commit. Main had not moved (base `7d43c0e`), so the 15 commits were fast-forwarded as they are; the hashes below are final.
+- **Then once more in the main checkout** after the fast-forward: `swift build`, `swift test` (269 tests in the kit target, 44 in the CLI target) and `scripts/ci-sim.sh` (`ci-sim: OK`).
+- **Hardware:** `just hw-test` and `just bench` were NOT run, and no sound was played. One hardware test was added for IN-09 and run against the real HAL on this Mac (MacBook Pro speakers and microphone, `open` and `stop` only, no IO started): it fails without the fix and passes with it. Everything else on the HAL side (IN-03 stream formats, IN-05 refused listeners, the real device classification behind CR-03 and WR-12) is covered by the simulator, unit tests of the pure logic, or not at all, so those entries are marked "requires human verification".
+- `.planning/config.json` and `.planning/state.json` were never staged.
 
-**Verification (iteration 1):** ran in the isolated worktree (`.claude/worktrees/rf-01-4687-1794500267`), not the main checkout. `swift build`, `swift test` (242 tests in the kit target, 40 in the CLI target, all passing) and `scripts/ci-sim.sh` after each Swift fix, plus the full `scripts/test.sh` at the end. Hardware tests (`just hw-test`, `just bench`) were NOT run: no audio interface was driven.
+## Fixed Issues (iteration 3)
 
-## Fixed Issues
+### CR-03: A virtual or "Loop" input overrides the headphone ceiling: the ramp can reach -6 dBFS in headphones (external: codex)
+
+**Status:** fixed: requires human verification (hearing-safety ceiling logic; the pure classification is unit tested, the real device combinations need hardware)
+**Files modified:** `Sources/SoundPingKit/Preflight/LevelRamp.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`
+**Commit:** c0736f5
+**Applied fix:**
+- `LevelRamp.classify` checks the output first: `outputIsHeadphones` (built-in headphones, any Bluetooth output) returns `.headphones` (-30 dBFS) whatever the input is. `.loopback` is returned only when the output feeds the input: the same device with a `Loop` channel or a virtual input, or a virtual output. A built-in speaker output with a virtual input or a `Loop` channel on another device now gets -12 dBFS, not -6. A USB interface output next to a virtual input on another device is `.unknown` (-18).
+- The review's snippet was applied as suggested. The doc table in the `classify` comment now lists headphones first and says why.
+- Tests: headphones, Bluetooth and speakers each combined with a virtual input and with a `Loop` channel on another device; a virtual output; the recorded-transport fallback; and an end-to-end ramp with a Bluetooth output and a virtual input (channel named "Loop 1") that never goes above -30 dBFS.
+
+### WR-12: A built-in output without a readable `hdpn` data source gets the speaker ceiling: the classifier fails open
+
+**Status:** fixed: requires human verification (safety ceiling classification; what the headphone jack reports on Apple Silicon is still a hardware question)
+**Files modified:** `Sources/SoundPingKit/Preflight/LevelRamp.swift`, `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Sources/SoundPingKit/Preflight/Preflight.swift`, `Sources/soundping/Commands/RunOptions.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`
+**Commit:** f4b8604
+**Applied fix:**
+- `outputIsHeadphones` now proves "speaker" instead of "headphones": Bluetooth is headphones, and a built-in output is headphones unless its data source is `ispk`. A nil, unreadable or other data source (and a catalog miss with only a recorded `builtIn` transport) gets -30 dBFS. This also decides the `--in-channel auto` probe ceiling, which uses the same function.
+- Updated the ceiling table in the `classify` doc comment, the `--max-level` help text, the channel-probe doc comment, and the `nothingHeardAtCeiling` hint on a headphone listener (it now names built-in outputs that do not report their speakers as well as Bluetooth).
+- Tests: built-in output with `dataSource: nil`, with another source, with no device info at all, and the `ispk` case that keeps the speaker ceiling. The cost on this machine is nil: the built-in speakers report `ispk`.
+
+### IN-02: The same-device window has no pre-roll, so a near-zero path is rejected as `outsideWindow`
+
+**Status:** fixed: requires human verification (window logic; the exact label offset of a real software loop such as Rogue Amoeba Loopback needs a bench run)
+**Files modified:** `Sources/SoundPingKit/Engine/HitListener.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`
+**Commit:** 857e395
+**Applied fix:**
+- A same-device window now starts one pre-roll (5 ms) before the output frame, like the two-device window, clamped at frame 0. The reported latency is still `frame - outputFrame`, so nothing else changes. Level probes and the channel probe go through the same `listen`, so a zero-delay loop no longer fails the whole preflight with `nothingHeardAtCeiling`.
+- **Decision on a negative path:** it is kept as measured, not rejected. A driver that labels input slightly early gives a negative number, and the number is what the labels say; rejecting it would hide a real finding. The reasoning is in the `listen` comment. No flag is added to the result.
+- Tests: a 0-frame path measures about 0 (20 of 20 valid), and a -24-frame path is measured as -24 with no `outsideWindow` rejections. Both fail without the change (checked).
+- Not touched: the overload check in `listen` (WR-01).
+
+### IN-01: A probe rejected for an overload or a discontinuity counts as "not heard", so the ramp climbs 6 dB
+
+**Status:** fixed: requires human verification (ramp logic around a real-time fault)
+**Files modified:** `Sources/SoundPingKit/Preflight/ProbePlayer.swift`, `Sources/SoundPingKit/Preflight/LevelRamp.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`
+**Commit:** 4f4815f
+**Applied fix:**
+- `ProbePlayer.Played` gained `glitched` (an overload, or a detection rejected as `.discontinuity`). `lockLevel` replays a glitched probe at the same level, at most `LevelRamp.maxGlitchRetries` (3) times per level, before the ramp takes the answer as it is. The counter resets when the ramp steps. The level never exceeds the ceiling either way. Every replay is still listed in the probe events and the report.
+- The channel probe is unchanged: it keeps its own loop and is not part of this finding's files.
+- Tests use a small forwarding backend that makes the first N listening windows report lost frames: two glitched probes then a clean one stay at -48 dBFS, and an endless run of glitches still ends in `nothingHeardAtCeiling` after exactly 8 levels x 4 plays, none above the ceiling.
+
+### IN-03: `requireFloat32` checks only the first stream of a scope
+
+**Status:** fixed: requires human verification (HAL path, no simulator coverage)
+**Files modified:** `Sources/SoundPingKit/Audio/HALBackend.swift`
+**Commit:** 62edfb9
+**Applied fix:** `requireFloat32` takes the buffers (streams) the selected channels sit in (every output slot's, and the input slot's) and checks each one's `kAudioStreamPropertyVirtualFormat`. A stream whose format cannot be read, or that does not exist at that index, is refused as `unsupportedStreamFormat` instead of passing silently. The stream index in the channel list and the index into `kAudioDevicePropertyStreams` come from the same stream order. No unit test is possible without a device; the hardware tests compile against it. The risk to confirm on hardware is a device whose streams cannot be read at all, which is now refused where it used to be let through.
+
+### IN-04: Doc comments contradict the code
+
+**Status:** fixed
+**Files modified:** `Sources/SoundPingKit/Audio/HALProperty.swift`, `Sources/SoundPingKit/Store/RunStore.swift`, `.planning/phases/01-audio-round-trip/01-SECURITY.md`
+**Commit:** 1a5839d
+**Applied fix:** the `HALProperty` header now says nothing in that file sets a property and names `HALBackend.applyBuffer` as the one place SoundPing sets one (its own buffer size). `RunStore.runFile` says an id is resolved under `runs/` only and an absolute path is read where it points. The T-01-19 and T-01-34 rows in the security audit say the same.
+
+### IN-05: Dead code and an unused dependency
+
+**Status:** fixed: requires human verification (the refused-listener warning comes from the HAL path)
+**Files modified:** `Package.swift`, `Package.resolved`, `Sources/SoundPingKit/Audio/AudioBackend.swift`, `Sources/SoundPingKit/Audio/HALBackend.swift`, `Sources/SoundPingKit/Audio/HALProperty.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Sources/soundping/Render/ExitCodes.swift`, `Tests/SoundPingKitTests/PreflightTests.swift`, `.planning/phases/01-audio-round-trip/01-SECURITY.md`
+**Commit:** 8364a6c
+**Applied fix:**
+- Dropped `swift-log` from `Package.swift` and `Package.resolved` (nothing imported `Logging`), `ExitCodes.exitCode(for:)` (and its now-unused `ArgumentParser` import) and `HALProperty.has`. The T-01-SC row in the security audit follows.
+- `BackendInfo` gained `warnings`. The HAL backend fills it when `DeviceListeners.refused > 0` ("the HAL refused N device-change notification(s), so a device change during this run may not abort it"), and the coordinator puts it into the preflight warnings, which the CLI prints as `Preflight: ...`. A test pushes a backend warning through a run into `result.preflight.warnings`.
+- **Left as it is:** `AGENTS.md` (and so the `CLAUDE.md` stack section generated from it) still lists swift-log as a recommended library ("Structured logs ... Always"). That is the stack decision record, not code, so it is for the maintainer to keep or amend.
+
+### IN-06: Duplicated logic
+
+**Status:** fixed
+**Files modified:** `Sources/SoundPingKit/Audio/HALBackend.swift`, `Sources/SoundPingKit/Store/Setups.swift`
+**Commit:** dcdc409
+**Applied fix:** removed `HALBackend`'s private `preflight` helper in favour of `SoundPingError.preflight`. `Setups.load` and `Setups.save` now go through `VersionedFile`, so setups decode with `RunJSON.decoder()` like the other stores. The error codes (`setupsUnreadable`, `setupsUnwritable`) are unchanged; two message texts differ slightly (the "not valid JSON of the expected shape" wording and "cannot write the saved setups file"). The existing resolver tests for unreadable setups still pass.
+
+### IN-07: Several stdout writes bypass `Output`'s guarded write
+
+**Status:** fixed
+**Files modified:** `Sources/soundping/Render/JSONRenderer.swift`, `Sources/soundping/Commands/DevicesCommand.swift`, `Sources/soundping/Commands/RunsCommand.swift`
+**Commit:** 9ae47ec
+**Applied fix:** `JSONRenderer.write`, `writeJSONLine` (`devices`), `runs list --json` and `runs show --json` use `Output.writeData`. Checked by hand: piping each of `run --simulate --json`, `devices --json`, `runs list --json` and `runs show --json` into `head -c1` exits 0.
+
+### IN-09: `HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it
+
+**Status:** fixed: requires human verification (the hardware test below ran, but only open and stop; a full probe or run on a reused backend was not run)
+**Files modified:** `Sources/SoundPingKit/Audio/HALBackend.swift`, `Tests/SoundPingKitTests/HardwareRoundTripTests.swift`
+**Commit:** 573b480
+**Applied fix:** the event stream and its sink live in the backend's state now. `open()` calls `beginOpen()`: after a `stop()` it makes a fresh stream (so `events`, read after `open`, is live again), and every open resets `gapsReported` and `stallReported` and clears `stopped`. A first open keeps the stream made at `init`. The backend stays reusable instead of single-use because `ChannelProbe` reopens it per channel. New hardware test `aReopenedBackendHasALiveEventStream` (open, stop, open on a real device, no IO started, no sound): fails without the fix, passes with it, both checked on this Mac.
+- Touches `surfaceGaps` and `reportStall` only in that they read the sink through the state now; the gap recording itself is untouched (WR-01).
+
+### IN-10: `--in-channel auto` ignores device changes while it probes (external: codex)
+
+**Status:** fixed: requires human verification (logic; the HAL events themselves need a real device change)
+**Files modified:** `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Sources/SoundPingKit/Engine/SoundPingError.swift`, `Tests/SoundPingKitTests/ChannelProbeTests.swift`
+**Commit:** 53b8d90
+**Applied fix:** each channel's probe now races the backend's `events` as well as the 60 s deadline. Any non-overload event ends the probe with the matching `deviceChanged` error. The event-to-error mapping the run supervisor used moved to `SoundPingError.forDeviceEvent`, so the run and the probe share it. The stream is the per-open one from IN-09, so the second channel's probe is watched too. A test announces a sample-rate change while the first channel waits for samples and expects `deviceChanged` / `sampleRateChanged`.
+
+### IN-11: `RunParameters.minValidFraction` is never validated (external: codex)
+
+**Status:** fixed
+**Files modified:** `Sources/SoundPingKit/Engine/HitScheduler.swift`, `Tests/SoundPingKitTests/SchedulerTests.swift`
+**Commit:** d4bf094
+**Applied fix:** `HitScheduler.validate` requires `minValidFraction` finite, above 0 and at most 1, and throws `invalidParameters` naming `minValidFraction` otherwise. NaN, infinity, 0, negatives and 1.5 are refused before anything plays; 0.01, 0.5 and 1.0 pass.
+
+### IN-12: Simulation flags are not range-checked and can trap the process (external: codex)
+
+**Status:** fixed
+**Files modified:** `Sources/soundping/Commands/SimulationOptions.swift`, `Tests/soundpingTests/SimulationOptionsTests.swift` (new)
+**Commit:** 15a88ac
+**Applied fix:** `SimulationOptions.scenario` requires every numeric flag finite and in range, or throws `invalidParameters` naming the flag: `--sim-latency` -48000...480000 frames, `--sim-jitter` 0...48000 frames, `--sim-noise` 0...1, `--sim-gain-db` -300...300, `--sim-drift-ppm` and `--sim-stamp-bias` within +-10000. The bounds are my picks, wide enough for any real test and far inside what traps; a small negative latency stays allowed because IN-02 makes it meaningful. Confirmed on the CLI: `--sim-stamp-bias 1e300` prints the error envelope and `--sim-latency inf` exits 64.
+
+### IN-13: A side-file write failure after run.json turns a saved run into a reported failure (WR-02 residual)
+
+**Status:** fixed: requires human verification (behaviour choice: the review offered two designs)
+**Files modified:** `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Tests/SoundPingKitTests/CalibrationStoreTests.swift`
+**Commit:** 5e93ac7
+**Applied fix:** I took the first design (a warning on a finished run). Once run.json is written, the calibration write and the self-test write are each tried on their own; a failure becomes a warning ("calibration not stored: ...", "clock self-test record not stored: ...") in `result.preflight.warnings`, `.finished` is still emitted, and the exit code stays the run's. A failed calibration write also sets `calibration.stored = false`, and run.json is then rewritten once so it tells the truth (best effort: if that second write fails too, the first stays as the saved run). The self-test record is attempted even when the calibration write failed. The CLI prints the warning in its `Preflight:` line, not as a separate `warning:` line, because that is where the result carries warnings today. A test makes the store root read-only and checks both warnings, `stored: false` in memory and in run.json, and one listed run.
+
+### IN-14: `recipes` output still disagrees with what a run uses
+
+**Status:** fixed
+**Files modified:** `Sources/soundping/Commands/RecipesCommand.swift`, `Sources/SoundPingKit/Preflight/LevelRamp.swift`, `Tests/soundpingTests/RecipesCommandTests.swift` (new)
+**Commit:** 4f097f8
+**Applied fix:** `defaults.templateId` is now explicitly `null`, next to a new `defaults.templateRule` ("follows the listener unless --template is given (chirp-loopback for a loop, chirp-speaker otherwise)"), so copying the advertised default into `--template` can no longer change behaviour. The `recipes --json` envelope is `schemaVersion` 2. The text listing says the rule too. This is a JSON contract change. The command's types are internal now so a test can encode them.
+
+## Fixed Issues (iterations 1 and 2)
+
+These 11 entries are kept as they were so the disposition ledger carries over. Notes on what iteration 3 changed about them are marked "Since:".
 
 ### CR-01: `--level` accepts NaN and ±inf. NaN bypasses the ceiling and plays NaN samples; inf throws away a finished run
 
@@ -47,6 +175,7 @@ status: partial
 **Applied fix:**
 - After the first `backend.open`, the probe classifies the output device once and keeps the -30 dBFS headphone ceiling for known headphones (built-in output on the `hdpn` data source). Everything else keeps the -18 dBFS unknown ceiling, as before. `--listener` and `--max-level` still win.
 - Deviation from the suggested snippet: it called `LevelRamp.classify`, which returns `.loopback` as soon as the probed channel is named "Loop N", and that would have skipped the headphone check. I added `LevelRamp.outputIsHeadphones` (output device only) and used it for both `classify` and the probe.
+- Since: CR-03 fixed the same ordering problem in `classify` itself, and WR-12 made `outputIsHeadphones` fail safe for a built-in output that does not report `ispk`.
 
 ### WR-02: Calibration and self-test records are written before run.json, so a failed write orphans them
 
@@ -54,6 +183,7 @@ status: partial
 **Files modified:** `Sources/SoundPingKit/Engine/RunCoordinator.swift`
 **Commit:** 709047d
 **Applied fix:** `storeCalibration` became `calibrationToStore`, which only decides and returns the `CalibrationRef` plus the record. `finish` now writes run.json first, then the calibration record, then the self-test record. If run.json cannot be encoded or written, no side file is touched. If a side-file write fails after run.json is written, the run exists with `calibration.stored == true` and no calibration entry; that is a smaller fault than an orphan record, but not zero.
+- Since: IN-13 closed that residual (a side-file failure is now a warning on a finished run, run.json is corrected, and the self-test record is still attempted).
 
 ### WR-06: Interactive save of the probed channel can write it into a setup with a different input device
 
@@ -75,6 +205,7 @@ status: partial
 **Files modified:** `Sources/SoundPingKit/Recipes/Recipe.swift`, `Sources/soundping/Commands/RecipesCommand.swift`
 **Commit:** 20c3793
 **Applied fix:** removed the dead `Recipe.startLevelDbfs` (-30). `recipes` now reports the level the ramp really starts at (`LevelRamp.firstProbeDbfs`, -48): the text line says "level ramp starts at -48 dBFS" and the JSON key `defaults.startLevelDbfs` is replaced by `defaults.rampStartLevelDbfs`. This is a JSON key change in `recipes --json`; I chose it over making the ramp start at -30 because that would have made the first probe 18 dB louder, a safety-relevant change.
+- Since: IN-14 bumped the `recipes --json` envelope to `schemaVersion` 2 for this rename and for the template default.
 
 ### WR-10: CI job has no `timeout-minutes`
 
@@ -130,23 +261,30 @@ status: partial
 - The `nothingHeardAtCeiling` fix hint on a headphone listener now says Bluetooth outputs are treated as headphones and names `--max-level` (for example `--max-level -18`) to allow a louder probe on a Bluetooth speaker.
 - The ceiling table now lives in the `LevelRamp.classify` doc comment (with the Bluetooth/USB rationale) and in the `--max-level` help text. No other user doc mentions the ceilings (checked README, AGENTS.md, CONTRIBUTING.md).
 - Tests cover Bluetooth classification (from the device and from the recorded setup transport), USB staying unknown, the channel probe's kind, a simulated Bluetooth-output ramp that never passes -30 dBFS, and the hint text.
+- Since: "a loopback input is still classed as loopback first" was the CR-03 hole; the output's ceiling now wins first.
 
 ## Skipped Issues
 
 ### WR-01: Overload rejection is racy and checks a single frame, not the lost interval
 
-**File:** `Sources/SoundPingKit/Engine/HitListener.swift:7-17, 86-92`, `Sources/SoundPingKit/Audio/HALBackend.swift`, `Sources/SoundPingKit/Audio/DeviceListeners.swift`, `Sources/SoundPingKit/Audio/IOCycle.swift`
-**Reason:** needs a design change, not a patch: an interval ring in `RTState` written from the IOProc, a new `AudioBackend` requirement (`discontinuities(overlapping:)`) implemented by the HAL backend, the simulator and the test doubles, and a new semantics for HAL `'over'` events. It touches real-time code and cannot be validated without hardware (the simulator path is the one the review says does not exercise the FaultMonitor). Better done as its own planned change.
+**File:** `Sources/SoundPingKit/Engine/HitListener.swift:5-17, 88-95`, `Sources/SoundPingKit/Audio/HALBackend.swift:455-489`, `Sources/SoundPingKit/Audio/DeviceListeners.swift:139-144`, `Sources/SoundPingKit/Audio/IOCycle.swift:54-71`
+**Reason:** deferred to planned change (maintainer decision). It is a real-time redesign (an interval ring in `RTState`, a new `AudioBackend` requirement, new semantics for HAL `'over'`) that goes into a separate planned change right after iteration 3, together with WR-03 and IN-08. Not touched in iteration 3.
 **Original issue:** the overload check can run before the supervisor has fed the monitor, tests a point instead of an interval, collapses several gaps into one event, and maps `'over'` to the wrong frame.
 
 ### WR-03: The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs
 
-**File:** `Sources/SoundPingKit/Engine/RunCoordinator.swift:380`, `Sources/SoundPingKit/Audio/RTState.swift:119, 285-304`, `Sources/SoundPingKit/Audio/IOCycle.swift`
-**Reason:** the fix is a redesign of the real-time stamp log (one ring entry per duplex callback, no ordinal pairing for two devices, ring sized from the run length). Real-time code, and the misalignment only shows on hardware. A partial change (restricting the self-test to hits inside the logged range) would hide the ring-wrap symptom without fixing the pairing, so I left both. The cheap mitigation, if wanted sooner: cap `hits` or size `stampCapacity` from the scheduled run length.
+**File:** `Sources/SoundPingKit/Engine/RunCoordinator.swift:388`, `Sources/SoundPingKit/Audio/RTState.swift:119, 285-304`, `Sources/SoundPingKit/Audio/IOCycle.swift:33-46, 116-127`
+**Reason:** deferred to planned change (maintainer decision). The fix is a redesign of the real-time stamp log (one ring entry per duplex callback, no ordinal pairing for two devices, ring sized from the run length). Same separate planned change as WR-01 and IN-08. Not touched in iteration 3. Codex independently confirmed the pairing defect in the second review.
 **Original issue:** one skipped stamp in either direction shifts every later pair by a buffer, and 2^21 entries is exceeded by a 10 000-hit run.
+
+### IN-08: The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`
+
+**File:** `Sources/SoundPingKit/Audio/IOCycle.swift:85-87, 129-131`
+**Reason:** deferred to planned change (maintainer decision). It changes the IOProc's stamping in `IOCycle`, which the planned stamp and glitch redesign (WR-01, WR-03) rewrites; fixing it here would conflict with that. Not touched in iteration 3.
+**Original issue:** a timestamp without `kAudioTimeStampHostTimeValid` may carry host time 0; that point then enters the per-device least-squares fit and the self-test.
 
 ---
 
-_Fixed: 2026-11-12T18:30:00Z_
+_Fixed: 2026-11-12T19:07:27Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 2_
+_Iteration: 3_
