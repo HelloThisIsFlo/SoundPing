@@ -30,6 +30,7 @@ struct HitIndexList: ExpressibleByArgument, Sendable {
 /// Flags for the simulated device (ENG-05). They do nothing without `--simulate`.
 /// Fault injection: `--sim-miss`, `--sim-xrun` and `--sim-gain-db` fill the matching `Scenario` fields.
 /// Clock faults: `--sim-drift-ppm` and `--sim-stamp-bias` exercise the host-clock self-test.
+/// Device changes: `--sim-fault <kind>@<hit>` exercises the mid-run abort (ENG-07).
 struct SimulationOptions: ParsableArguments {
   @Flag(help: "Use the simulated device instead of real hardware.")
   var simulate = false
@@ -75,10 +76,18 @@ struct SimulationOptions: ParsableArguments {
   )
   var simStampBias: Double = 0
 
-  func scenario(seed: UInt64) -> Scenario {
+  @Option(
+    help:
+      "A device change part way through the run, as <kind>@<hit>; repeat the flag for several. Kinds: deviceGone, sampleRateChange, bufferChange, streamConfigChange (each aborts the run with exit 75) and overload (rejects that one hit). Example: sampleRateChange@30."
+  )
+  var simFault: [String] = []
+
+  func scenario(seed: UInt64, bufferFrames: Int = 128) throws -> Scenario {
     Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
-      pathGainDb: simGainDb, missedHits: simMiss.values, xrunHits: simXrun.values,
-      driftPPM: simDriftPpm, stampBiasFrames: simStampBias, seed: seed)
+      pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
+      xrunHits: simXrun.values,
+      driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
+      faults: try simFault.map(Fault.parse), seed: seed)
   }
 }

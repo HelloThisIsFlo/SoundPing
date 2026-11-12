@@ -189,4 +189,25 @@ assert entry["sampleRate"] == 48000 and entry["bufferFrames"] == 128 and entry["
 expect_failure "clock self-test failure" 3 clockSelfTestFailed selftest clock --simulate --sim-stamp-bias 3 --store "$WORK/store-selftest-bias"
 expect_failure "self-test needs one device" 64 selfTestNeedsSameDevice selftest clock --simulate --output scarlett --input "MacBook Pro Microphone" --in-channel 1 --store "$WORK/store-selftest-two"
 
+# A device that changes under a run (ENG-07): a sample rate change at hit 30 aborts with exit 75 and
+# the named code, a lost device at the first measured hit (hit 5 after 5 warm-ups) does the same, and
+# neither leaves a run.json behind. An overload only rejects its own hit and the run still passes.
+expect_failure "sample rate change" 75 sampleRateChanged run round-trip --simulate --hits 40 --sim-fault sampleRateChange@30 --store "$WORK/store-abort"
+expect_failure "device lost at the first measured hit" 75 deviceGone run round-trip --simulate --hits 20 --sim-fault deviceGone@5 --store "$WORK/store-abort"
+[ -z "$(find "$WORK/store-abort/runs" -name run.json)" ] || { echo "ci-sim: an aborted run left a run.json" >&2; exit 1; }
+expect_failure "fault at a hit the run never fires" 64 invalidParameters run round-trip --simulate --hits 10 --sim-fault overload@999 --store "$WORK/store-abort-range"
+expect_failure "malformed fault" 64 invalidParameters run round-trip --simulate --sim-fault nonsense@3 --store "$WORK/store-abort-spec"
+
+"$BIN" run round-trip --simulate --seed 7 --sim-jitter 0 --hits 20 --sim-fault overload@12 \
+  --json --store "$WORK/store-overload" >"$WORK/overload.out"
+python3 -c '
+import json, sys
+result = json.load(open(sys.argv[1]))
+rejected = [h["index"] for h in result["hits"] if h.get("rejection")]
+assert rejected == [12], rejected
+assert result["rejectedCounts"]["discontinuity"] == 1, result["rejectedCounts"]
+assert result["measured"]["path"]["valid"] == 19, result["measured"]["path"]
+assert result["simulation"]["faults"] == [{"kind": "overload", "atHit": 12}], result["simulation"]
+' "$WORK/overload.out"
+
 echo "ci-sim: OK"

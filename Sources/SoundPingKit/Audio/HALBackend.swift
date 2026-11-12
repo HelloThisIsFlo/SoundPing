@@ -1,0 +1,473 @@
+import CoreAudio
+import Foundation
+import Synchronization
+
+/// The real devices: one raw CoreAudio HAL IOProc per distinct device, no AVAudioEngine, no
+/// aggregate device (STACK "What NOT to use"). The output device's IOProc plays the scheduled
+/// chirps at exact sample positions; the input device's IOProc captures the selected channel; one
+/// duplex device does both in a single callback. The IOProcs only run the `@_noLocks` functions in
+/// `IOCycle.swift` on the preallocated `RTState`; everything else here is ordinary Swift on the
+/// engine side.
+///
+/// SoundPing measures and never tunes: the only device property it ever sets is its own
+/// per-process buffer size (RESEARCH P1). The nominal sample rate, volume, mute, data source and
+/// the system defaults belong to the user.
+public final class HALBackend: AudioBackend {
+  public let events: AsyncStream<DeviceEvent>
+  private let eventSink: AsyncStream<DeviceEvent>.Continuation
+  private let state = Mutex<State>(State())
+
+  /// How long `start()` waits for the first audio callbacks before it gives up.
+  private static let startTimeout = Duration.seconds(3)
+  /// How long the capture position may stand still before the device counts as stopped.
+  private static let stallTimeout = Duration.seconds(2)
+  /// The backend polls atomics instead of being woken by the audio thread, which must not signal.
+  private static let pollInterval = Duration.milliseconds(5)
+
+  /// A HAL handle the audio system owns; moving it between tasks is safe because only this class
+  /// starts, stops and destroys it, one call at a time.
+  private struct OpenDevice: @unchecked Sendable {
+    var id: AudioDeviceID
+    var uid: String
+    var procID: AudioDeviceIOProcID?
+    var running = false
+  }
+
+  private struct State {
+    var rt: RTState?
+    var devices: [OpenDevice] = []
+    var templateIndex: [String: Int] = [:]
+    var outputUID = ""
+    var inputUID = ""
+    var inputDeviceID = AudioDeviceID(kAudioObjectUnknown)
+    var reportedBuffer = 0
+    var sampleRate = 0.0
+    var gapsReported = 0
+    var stallReported = false
+    var stopped = false
+    var listeners: DeviceListeners?
+  }
+
+  public init() {
+    let (stream, continuation) = AsyncStream<DeviceEvent>.makeStream()
+    events = stream
+    eventSink = continuation
+  }
+
+  // MARK: Opening
+
+  public func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws
+    -> BackendInfo
+  {
+    let listing = try HALDeviceCatalog().listing()
+    let outInfo = try Self.find(setup.output, in: listing, role: "output")
+    let inInfo = try Self.find(setup.input, in: listing, role: "input")
+    guard let outScope = outInfo.output else {
+      throw SoundPingError.usage(
+        "deviceHasNoChannels", "\(outInfo.name) has no output channels",
+        context: ["device": outInfo.uid])
+    }
+    guard let inScope = inInfo.input else {
+      throw SoundPingError.usage(
+        "deviceHasNoChannels", "\(inInfo.name) has no input channels",
+        context: ["device": inInfo.uid])
+    }
+
+    // One rate for both directions: SoundPing never resamples and never changes a device's rate, so
+    // two devices at different rates cannot be measured against each other.
+    let rate = outInfo.nominalSampleRate
+    guard rate > 0, abs(rate - inInfo.nominalSampleRate) < 0.5 else {
+      throw SoundPingError.usage(
+        "sampleRateMismatch",
+        "\(outInfo.name) runs at \(Int(rate)) Hz and \(inInfo.name) at \(Int(inInfo.nominalSampleRate)) Hz. SoundPing never changes a device's sample rate; set both to the same rate in Audio MIDI Setup",
+        context: [
+          "outputRate": String(rate), "inputRate": String(inInfo.nominalSampleRate),
+        ])
+    }
+
+    var outSlots: [ChannelSlot] = []
+    for channel in setup.outChannels {
+      guard let slot = ChannelSlot.slot(forChannel: channel, in: outScope) else {
+        throw SoundPingError.usage(
+          "invalidChannel",
+          "\(outInfo.name) has no output channel \(channel) (it has \(outScope.channels.count))",
+          context: ["channel": String(channel), "device": outInfo.uid])
+      }
+      outSlots.append(slot)
+    }
+    guard let inSlot = ChannelSlot.slot(forChannel: setup.inChannel, in: inScope) else {
+      throw SoundPingError.usage(
+        "invalidChannel",
+        "\(inInfo.name) has no input channel \(setup.inChannel) (it has \(inScope.channels.count))",
+        context: ["channel": String(setup.inChannel), "device": inInfo.uid])
+    }
+
+    let outID = try Self.deviceID(forUID: outInfo.uid)
+    let inID = try Self.deviceID(forUID: inInfo.uid)
+    try Self.requireFloat32(outID, scope: kAudioObjectPropertyScopeOutput, name: outInfo.name)
+    try Self.requireFloat32(inID, scope: kAudioObjectPropertyScopeInput, name: inInfo.name)
+
+    // SoundPing's own buffer size, per process; the HAL may clamp it. What the HAL reports back is
+    // what the run records (the DAW's buffer is a different number and not ours to read).
+    let outBuffer = try Self.applyBuffer(
+      outID, requested: setup.requestedBufferFrames, name: outInfo.name)
+    let inBuffer =
+      inID == outID
+      ? outBuffer
+      : try Self.applyBuffer(inID, requested: setup.requestedBufferFrames, name: inInfo.name)
+
+    let regenerated = try templates.map { try $0.atSampleRate(rate) }
+    var index: [String: Int] = [:]
+    for (i, template) in regenerated.enumerated() { index[template.id] = i }
+
+    let rt = RTState(
+      RTState.Configuration(
+        sampleRate: rate, inputSlot: inSlot, outputSlots: outSlots,
+        templates: regenerated.map(\.samples)))
+
+    // Device handles are tracked from the first IOProc on, so a failure part way through is cleaned
+    // up by `stop()`, which the coordinator calls on every exit path.
+    var devices: [OpenDevice] = []
+    do {
+      if outID == inID {
+        devices.append(
+          try Self.makeDevice(
+            id: outID, uid: outInfo.uid, rt: rt, captures: true, plays: true,
+            hasInputs: true, hasOutputs: true))
+      } else {
+        devices.append(
+          try Self.makeDevice(
+            id: outID, uid: outInfo.uid, rt: rt, captures: false, plays: true,
+            hasInputs: outInfo.input != nil, hasOutputs: true))
+        devices.append(
+          try Self.makeDevice(
+            id: inID, uid: inInfo.uid, rt: rt, captures: true, plays: false,
+            hasInputs: true, hasOutputs: inInfo.output != nil))
+      }
+    } catch {
+      Self.destroy(devices)
+      throw error
+    }
+
+    // Listening starts once the buffer sizes are settled, so SoundPing's own change is not news.
+    var watched = [
+      DeviceListeners.Watched(id: outID, uid: outInfo.uid, bufferFrames: outBuffer)
+    ]
+    if inID != outID {
+      watched.append(DeviceListeners.Watched(id: inID, uid: inInfo.uid, bufferFrames: inBuffer))
+    }
+    let listeners = DeviceListeners(watching: watched, rate: rate, rt: rt, sink: eventSink)
+
+    state.withLock {
+      $0.rt = rt
+      $0.listeners = listeners
+      $0.devices = devices
+      $0.templateIndex = index
+      $0.outputUID = outInfo.uid
+      $0.inputUID = inInfo.uid
+      $0.inputDeviceID = inID
+      $0.reportedBuffer = inBuffer
+      $0.sampleRate = rate
+      $0.stopped = false
+    }
+
+    return BackendInfo(
+      sampleRate: rate, bufferFrames: inBuffer, hostClock: .system, outputDevice: outInfo,
+      inputDevice: inInfo)
+  }
+
+  /// A check before the run failed (exit 65).
+  private static func preflight(_ code: String, _ detail: String, context: [String: String] = [:])
+    -> SoundPingError
+  {
+    SoundPingError(kind: .preflight, code: code, detail: detail, context: context)
+  }
+
+  private static func find(_ ref: DeviceRef, in listing: DevicesListing, role: String) throws
+    -> DeviceInfo
+  {
+    guard let info = listing.audio.first(where: { $0.uid == ref.uid }) else {
+      throw SoundPingError.usage(
+        "deviceNotFound", "the \(role) device '\(ref.name)' (\(ref.uid)) is not connected",
+        context: ["device": ref.uid])
+    }
+    guard info.isAlive else {
+      throw SoundPingError.deviceChanged(
+        "deviceGone", "the \(role) device '\(info.name)' is not alive", context: ["uid": info.uid])
+    }
+    return info
+  }
+
+  private static func deviceID(forUID uid: String) throws -> AudioDeviceID {
+    let ids = HALProperty.array(
+      AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices,
+      of: AudioDeviceID.self, initial: AudioDeviceID(0))
+    guard
+      let id = ids.first(where: { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == uid })
+    else {
+      throw SoundPingError.deviceChanged(
+        "deviceGone", "device '\(uid)' disappeared while the run was being set up",
+        context: ["uid": uid])
+    }
+    return id
+  }
+
+  /// The callbacks hand over raw Float32 samples; anything else would be read as noise.
+  private static func requireFloat32(
+    _ device: AudioDeviceID, scope: AudioObjectPropertyScope, name: String
+  ) throws {
+    let streams = HALProperty.array(
+      device, kAudioDevicePropertyStreams, scope: scope, of: AudioStreamID.self,
+      initial: AudioStreamID(0))
+    guard let stream = streams.first,
+      let format = HALProperty.get(
+        stream, kAudioStreamPropertyVirtualFormat, initial: AudioStreamBasicDescription())
+    else { return }
+    let isFloat32 =
+      format.mFormatID == kAudioFormatLinearPCM
+      && (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && format.mBitsPerChannel == 32
+    guard isFloat32 else {
+      throw SoundPingError.usage(
+        "unsupportedStreamFormat",
+        "\(name) delivers \(format.mBitsPerChannel)-bit samples (format flags \(format.mFormatFlags)); SoundPing reads 32-bit float streams only",
+        context: ["device": name])
+    }
+  }
+
+  /// Sets SoundPing's own I/O buffer size for `device` and returns the size the HAL reports back.
+  /// This is the one property SoundPing ever sets: it is per process, so the DAW's buffer and every
+  /// other app's stay as they are. With no request nothing is set and the current size is read.
+  private static func applyBuffer(_ device: AudioDeviceID, requested: Int?, name: String) throws
+    -> Int
+  {
+    if let requested {
+      let range = HALProperty.get(
+        device, kAudioDevicePropertyBufferFrameSizeRange,
+        initial: AudioValueRange(mMinimum: 0, mMaximum: 0))
+      var frames = UInt32(Swift.max(1, requested))
+      if let range, range.mMaximum > 0 {
+        frames = Swift.min(Swift.max(frames, UInt32(range.mMinimum)), UInt32(range.mMaximum))
+      }
+      var address = HALProperty.address(kAudioDevicePropertyBufferFrameSize)
+      let status = AudioObjectSetPropertyData(
+        device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+      guard status == noErr else {
+        throw Self.preflight(
+          "bufferSizeNotApplied",
+          "\(name) refused a buffer size of \(requested) frames (HAL status \(status))",
+          context: ["device": name, "requested": String(requested)])
+      }
+    }
+    guard
+      let applied = HALProperty.get(
+        device, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
+      applied > 0
+    else {
+      throw Self.preflight(
+        "bufferSizeUnknown", "could not read the buffer size of \(name)",
+        context: ["device": name])
+    }
+    return Int(applied)
+  }
+
+  private static func makeDevice(
+    id: AudioDeviceID, uid: String, rt: RTState, captures: Bool, plays: Bool, hasInputs: Bool,
+    hasOutputs: Bool
+  ) throws -> OpenDevice {
+    var procID: AudioDeviceIOProcID?
+    // A device without inputs (or outputs) may hand the block no buffer list at all, so the cycle
+    // functions are only called for the directions the device really has.
+    let status = AudioDeviceCreateIOProcIDWithBlock(&procID, id, nil) {
+      _, inputData, inputTime, outputData, outputTime in
+      if captures, hasInputs { ioCycleInput(rt, inputData, inputTime) }
+      if hasOutputs { ioCycleOutput(rt, outputData, outputTime, isOutputDevice: plays) }
+    }
+    guard status == noErr, procID != nil else {
+      throw Self.preflight(
+        "ioProcFailed", "could not create an audio callback on '\(uid)' (HAL status \(status))",
+        context: ["device": uid])
+    }
+    return OpenDevice(id: id, uid: uid, procID: procID)
+  }
+
+  private static func destroy(_ devices: [OpenDevice]) {
+    for device in devices {
+      if device.running { AudioDeviceStop(device.id, device.procID) }
+      if let procID = device.procID { AudioDeviceDestroyIOProcID(device.id, procID) }
+    }
+  }
+
+  // MARK: Running
+
+  public func start() async throws {
+    let (rt, devices) = state.withLock { ($0.rt, $0.devices) }
+    guard let rt else {
+      throw SoundPingError.internalFailure(
+        "notOpen", "the HAL backend was started before it was opened")
+    }
+    for (position, device) in devices.enumerated() {
+      let status = AudioDeviceStart(device.id, device.procID)
+      guard status == noErr else {
+        throw Self.preflight(
+          "deviceStartFailed", "could not start audio on '\(device.uid)' (HAL status \(status))",
+          context: ["device": device.uid])
+      }
+      state.withLock { $0.devices[position].running = true }
+    }
+
+    // The labels of both directions are only known once a callback has run.
+    let clock = ContinuousClock()
+    let deadline = clock.now + Self.startTimeout
+    while !(rt.inputStarted.load(ordering: .acquiring)
+      && rt.outputStarted.load(ordering: .acquiring))
+    {
+      guard clock.now < deadline else {
+        throw SoundPingError.deviceChanged(
+          "ioStopped", "no audio callbacks arrived within \(Self.startTimeout)",
+          context: ["uid": state.withLock { $0.outputUID }])
+      }
+      try await Task.sleep(for: Self.pollInterval)
+    }
+
+    // The buffer the HAL settled on after the start is the one the run measures at.
+    let (inputID, inputUID, reported) = state.withLock {
+      ($0.inputDeviceID, $0.inputUID, $0.reportedBuffer)
+    }
+    if let now = HALProperty.get(inputID, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
+      Int(now) != reported
+    {
+      eventSink.yield(.bufferSizeChanged(uid: inputUID, from: reported, to: Int(now)))
+    }
+  }
+
+  public func currentOutputFrame() async -> Int64 {
+    guard let rt = state.withLock({ $0.rt }) else { return 0 }
+    return Int64(rt.outputNextLabel.load(ordering: .acquiring))
+  }
+
+  public func currentInputFrame() async -> Int64 {
+    guard let rt = state.withLock({ $0.rt }) else { return 0 }
+    return Int64(rt.inputNextLabel.load(ordering: .acquiring))
+  }
+
+  public func schedule(_ hits: [ScheduledHit]) async throws {
+    try state.withLock { state in
+      guard let rt = state.rt else {
+        throw SoundPingError.internalFailure(
+          "notOpen", "hits were scheduled before the backend was opened")
+      }
+      var entries: [ScheduleEntry] = []
+      entries.reserveCapacity(hits.count)
+      for hit in hits {
+        guard let template = state.templateIndex[hit.templateId] else {
+          throw SoundPingError.internalFailure(
+            "unknownTemplate",
+            "hit \(hit.index) uses template '\(hit.templateId)' that was never opened")
+        }
+        entries.append(
+          ScheduleEntry(
+            outputFrame: Int(hit.outputFrame), gain: hit.gain, template: template,
+            hitIndex: hit.index))
+      }
+      try rt.append(entries)
+    }
+  }
+
+  public func waitUntilCaptured(throughInputFrame target: Int64) async throws {
+    guard let rt = state.withLock({ $0.rt }) else {
+      throw SoundPingError.internalFailure("notOpen", "the HAL backend was never opened")
+    }
+    let clock = ContinuousClock()
+    var lastNext = rt.inputNextLabel.load(ordering: .acquiring)
+    var lastProgress = clock.now
+    while true {
+      let next = rt.inputNextLabel.load(ordering: .acquiring)
+      surfaceGaps(rt)
+      if Int64(next) >= target { return }
+      if next != lastNext {
+        lastNext = next
+        lastProgress = clock.now
+      } else if clock.now - lastProgress > Self.stallTimeout {
+        reportStall()
+      }
+      try await Task.sleep(for: Self.pollInterval)
+    }
+  }
+
+  /// A sample-time discontinuity the audio thread noticed becomes an overload event. The hits whose
+  /// windows it touches are rejected by the coordinator; the run goes on (ENG-07).
+  private func surfaceGaps(_ rt: RTState) {
+    let count = rt.gapCount.load(ordering: .acquiring)
+    let (reported, uid) = state.withLock { state -> (Int, String) in
+      let previous = state.gapsReported
+      state.gapsReported = Swift.max(previous, count)
+      return (previous, state.inputUID)
+    }
+    if count > reported {
+      eventSink.yield(
+        .overload(uid: uid, atInputFrame: Int64(rt.lastGapLabel.load(ordering: .relaxed))))
+    }
+  }
+
+  /// The capture position stood still: the device stopped delivering audio. Said once; the
+  /// coordinator aborts the run on it.
+  private func reportStall() {
+    let uid = state.withLock { state -> String? in
+      guard !state.stallReported else { return nil }
+      state.stallReported = true
+      return state.inputUID
+    }
+    if let uid { eventSink.yield(.ioStopped(uid: uid)) }
+  }
+
+  public func capture(_ range: Range<Int64>) async throws -> [Float] {
+    guard let rt = state.withLock({ $0.rt }) else {
+      throw SoundPingError.internalFailure("notOpen", "the HAL backend was never opened")
+    }
+    return try rt.readCapture(range)
+  }
+
+  public func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    guard let rt = state.withLock({ $0.rt }), !range.isEmpty else { return [] }
+    return rt.callbackStamps(covering: range)
+  }
+
+  public func stampLog() async -> StampLog {
+    guard let rt = state.withLock({ $0.rt }) else { return StampLog() }
+    return rt.stampLog()
+  }
+
+  /// The HAL's own host time for an input sample, as a diagnostic third opinion next to our
+  /// timeline. Nil when the device refuses to translate.
+  public func halHostTime(forInputSample sample: Double) async -> UInt64? {
+    let (device, running) = state.withLock { state in
+      (state.inputDeviceID, state.devices.contains { $0.running })
+    }
+    guard running, device != AudioDeviceID(kAudioObjectUnknown) else { return nil }
+    var input = AudioTimeStamp()
+    input.mSampleTime = sample
+    input.mFlags = .sampleTimeValid
+    var output = AudioTimeStamp()
+    output.mFlags = .hostTimeValid
+    guard AudioDeviceTranslateTime(device, &input, &output) == noErr,
+      output.mFlags.contains(.hostTimeValid), output.mHostTime > 0
+    else { return nil }
+    return output.mHostTime
+  }
+
+  // MARK: Stopping
+
+  public func stop() async {
+    let (devices, listeners) = state.withLock { state -> ([OpenDevice], DeviceListeners?) in
+      guard !state.stopped else { return ([], nil) }
+      state.stopped = true
+      let taken = (state.devices, state.listeners)
+      state.devices = []
+      state.listeners = nil
+      return taken
+    }
+    listeners?.remove()
+    Self.destroy(devices)
+    eventSink.finish()
+  }
+}
