@@ -5,7 +5,7 @@ import Foundation
 /// because the test sound reaches a person's ears (T-01-28).
 ///
 /// The ramp is a pure state machine: the coordinator plays a probe at the level it asks for and
-/// tells it what was heard. The ceilings and the 0.9 confidence target are RESEARCH A3 assumptions,
+/// tells it what was heard. The ceilings (see `classify`) and the 0.9 confidence target are RESEARCH A3 assumptions,
 /// tunable on the bench.
 public struct LevelRamp: Sendable {
   public static let firstProbeDbfs = -48.0
@@ -34,9 +34,20 @@ public struct LevelRamp: Sendable {
 
   // MARK: Listener, ceiling, template
 
-  /// Who is going to hear the test sound. Loopback is a `Loop` input channel or a virtual input
-  /// device; the built-in output is headphones on its headphone data source and speakers
-  /// otherwise; any other output is unknown, because an interface headphone jack looks like a line out.
+  /// Who is going to hear the test sound, and so the ceiling the ramp may not pass:
+  ///
+  /// | Listener | Ceiling | When |
+  /// |---|---|---|
+  /// | loopback | -6 dBFS | a `Loop` input channel or a virtual input device |
+  /// | speaker | -12 dBFS | the built-in output, on anything but its headphone data source |
+  /// | headphones | -30 dBFS | the built-in output on its headphone data source, or any Bluetooth output |
+  /// | unknown | -18 dBFS | everything else (USB and other interfaces) |
+  ///
+  /// A Bluetooth output is nearly always earbuds or headphones, so it gets the headphone ceiling. A
+  /// wrong guess costs a Bluetooth-speaker user one flag (`--max-level`); the opposite wrong guess
+  /// would put -18 dBFS clicks next to someone's ears. USB outputs stay unknown: there is no
+  /// reliable way to tell a headset from an interface, and an interface headphone jack looks like
+  /// a line out. `--listener` and `--max-level` override all of it.
   public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
     -> ListenerKind
   {
@@ -45,16 +56,17 @@ public struct LevelRamp: Sendable {
     if looped || inputTransport == "virtual" { return .loopback }
 
     let outputTransport = output?.transport ?? setup.output.transport
-    if outputTransport == "builtIn" {
-      return outputIsHeadphones(setup: setup, output: output) ? .headphones : .speaker
-    }
+    if outputIsHeadphones(setup: setup, output: output) { return .headphones }
+    if outputTransport == "builtIn" { return .speaker }
     return .unknown
   }
 
-  /// Whether the output device is known to be headphones: the built-in output on its headphone
-  /// data source. It depends on the output device alone, whatever the input is.
+  /// Whether the output device is treated as headphones: the built-in output on its headphone
+  /// data source, or any Bluetooth output (see `classify`). It depends on the output device alone,
+  /// whatever the input is.
   public static func outputIsHeadphones(setup: ResolvedSetup, output: DeviceInfo?) -> Bool {
     let outputTransport = output?.transport ?? setup.output.transport
+    if outputTransport == "bluetooth" { return true }
     return outputTransport == "builtIn" && output?.output?.dataSource == "hdpn"
   }
 

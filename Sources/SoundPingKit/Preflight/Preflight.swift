@@ -111,7 +111,10 @@ public struct Preflight: Sendable {
     let access = terminalApp.map { " for \($0)" } ?? ""
     var fix =
       "check the cable or loop routing, that microphone access is allowed\(access), the output volume and the input gain, then rerun"
-    if listener == .headphones || listener == .speaker {
+    if listener == .headphones {
+      fix +=
+        "; Bluetooth outputs are treated as headphones, so for a Bluetooth speaker (or any output that is not at your ears) allow a louder probe with --max-level, for example --max-level -18, only when you know the level is safe"
+    } else if listener == .speaker {
       fix += "; raise the ceiling with --max-level only when you know the level is safe"
     }
     return .preflight(

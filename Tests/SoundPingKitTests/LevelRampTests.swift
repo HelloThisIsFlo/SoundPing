@@ -58,6 +58,48 @@ import Testing
       LevelRamp.classify(setup: setup, output: Self.scarlett, input: Self.scarlett) == .unknown)
   }
 
+  private static func bluetooth(from base: DeviceInfo) -> DeviceInfo {
+    var device = base
+    device.transport = "bluetooth"
+    return device
+  }
+
+  @Test func aBluetoothOutputIsHeadphonesWhateverItsDataSource() {
+    let earbuds = Self.bluetooth(from: Self.macSpeakers)
+    let setup = Self.setup(output: earbuds, input: Self.macMicrophone)
+    #expect(
+      LevelRamp.classify(setup: setup, output: earbuds, input: Self.macMicrophone) == .headphones)
+    #expect(LevelRamp.outputIsHeadphones(setup: setup, output: earbuds))
+    #expect(LevelRamp.ceilingDbfs(for: .headphones) == -30)
+
+    // The device list may be unavailable; the transport the setup recorded is enough.
+    var ref = earbuds.ref
+    ref.transport = "bluetooth"
+    let recorded = ResolvedSetup(
+      output: ref, input: Self.macMicrophone.ref, outChannels: [1, 2], inChannel: 1)
+    #expect(LevelRamp.classify(setup: recorded, output: nil, input: nil) == .headphones)
+  }
+
+  @Test func aUSBOutputStaysUnknownBecauseThereIsNoReliableWayToTellAHeadsetFromAnInterface() {
+    let usb = Self.scarlett
+    #expect(usb.transport == "usb")
+    let setup = Self.setup(output: usb, input: Self.macMicrophone)
+    #expect(LevelRamp.classify(setup: setup, output: usb, input: Self.macMicrophone) == .unknown)
+    #expect(!LevelRamp.outputIsHeadphones(setup: setup, output: usb))
+  }
+
+  @Test func theChannelProbeAlsoKeepsTheHeadphoneCeilingOnABluetoothOutput() {
+    let earbuds = Self.bluetooth(from: Self.macSpeakers)
+    let setup = Self.setup(output: earbuds, input: Self.macMicrophone)
+    #expect(
+      ChannelProbe.listenerKind(options: PreflightOptions(), setup: setup, output: earbuds)
+        == .headphones)
+    #expect(
+      ChannelProbe.listenerKind(
+        options: PreflightOptions(listener: .speaker), setup: setup, output: earbuds) == .speaker,
+      "--listener still wins")
+  }
+
   @Test func eachListenerHasItsOwnCeiling() {
     #expect(LevelRamp.ceilingDbfs(for: .loopback) == -6)
     #expect(LevelRamp.ceilingDbfs(for: .speaker) == -12)
@@ -389,6 +431,32 @@ import Testing
       error.context["fix"]?.isEmpty == false, "the hint names cable, permission, volume, gain")
     #expect(collected.probes.map(\.levelDbfs) == [-48, -42, -36, -30, -24, -18, -12, -6])
     #expect(!collected.tags.contains("armed"))
+  }
+
+  @Test func aBluetoothOutputRampsNoHigherThanTheHeadphoneCeiling() async throws {
+    var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
+    output.transport = "bluetooth"
+    let setup = ResolvedSetup(
+      output: output, input: SimulatedCatalog.macMicrophone.ref, outChannels: [1, 2], inChannel: 1)
+    let collected = try await Self.run(
+      Scenario(jitterFrames: 0, pathGainDb: -80, seed: 3), setup: setup)
+    let error = try #require(collected.error)
+    #expect(error.code == "nothingHeardAtCeiling")
+    #expect(error.context["listener"] == "headphones")
+    #expect(error.context["ceilingDbfs"] == "-30.0")
+    #expect(collected.probes.map(\.levelDbfs) == [-48, -42, -36, -30])
+  }
+
+  @Test func nothingHeardOnAHeadphoneListenerPointsAtMaxLevelForASpeaker() {
+    let error = Preflight.nothingHeardError(
+      ceilingDbfs: -30, listener: .headphones, probes: 4, chosenLevel: nil, terminalApp: nil)
+    let fix = error.context["fix"] ?? ""
+    #expect(fix.contains("--max-level"), "\(fix)")
+    #expect(fix.contains("Bluetooth speaker"), "\(fix)")
+    // Other listeners do not get the Bluetooth hint.
+    let unknown = Preflight.nothingHeardError(
+      ceilingDbfs: -18, listener: .unknown, probes: 4, chosenLevel: nil, terminalApp: nil)
+    #expect(unknown.context["fix"]?.contains("--max-level") == false)
   }
 
   @Test func aMutedOutputIsNamedBeforeTheFirstProbe() async throws {
