@@ -6,7 +6,7 @@ import Testing
 
 /// A hand-built AudioBufferList with interleaved Float32 buffers, like the one the HAL passes to
 /// an IOProc. Owns its memory.
-private final class SyntheticBuffers {
+final class SyntheticBuffers {
   let list: UnsafeMutableAudioBufferListPointer
   let frames: Int
   let widths: [Int]
@@ -41,13 +41,49 @@ private final class SyntheticBuffers {
   }
 }
 
-private func timeStamp(sample: Double, host: UInt64 = 0, rate: Double = 1) -> AudioTimeStamp {
+func timeStamp(
+  sample: Double, host: UInt64 = 1, rate: Double = 1,
+  flags: AudioTimeStampFlags = [.sampleTimeValid, .hostTimeValid, .rateScalarValid]
+) -> AudioTimeStamp {
   var stamp = AudioTimeStamp()
   stamp.mSampleTime = sample
   stamp.mHostTime = host
   stamp.mRateScalar = rate
-  stamp.mFlags = [.sampleTimeValid, .hostTimeValid, .rateScalarValid]
+  stamp.mFlags = flags
   return stamp
+}
+
+/// One IOProc callback over buffer lists of the `[2, 4]` channel layout, called the way the HAL
+/// block calls `ioCycle`. A direction a test does not care about gets a scratch list.
+func cycle(
+  _ rt: RTState, captures: Bool = true, plays: Bool = true, hasInputs: Bool = true,
+  hasOutputs: Bool = true, input: SyntheticBuffers? = nil, inputTime: AudioTimeStamp,
+  output: SyntheticBuffers? = nil, outputTime: AudioTimeStamp
+) {
+  let inList = input ?? SyntheticBuffers(widths: [2, 4], frames: 16)
+  let outList = output ?? SyntheticBuffers(widths: [2, 4], frames: 16)
+  var inTime = inputTime
+  var outTime = outputTime
+  ioCycle(
+    rt, captures: captures, plays: plays, hasInputs: hasInputs, hasOutputs: hasOutputs,
+    inputData: UnsafePointer(inList.pointer), inputTime: &inTime, outputData: outList.pointer,
+    outputTime: &outTime)
+}
+
+/// An input-only callback, as a separate input device runs it.
+func captureCycle(_ rt: RTState, _ input: SyntheticBuffers, _ time: AudioTimeStamp) {
+  cycle(
+    rt, captures: true, plays: false, hasOutputs: false, input: input, inputTime: time,
+    outputTime: time)
+}
+
+/// An output-only callback, as a separate output device runs it.
+func playCycle(
+  _ rt: RTState, _ output: SyntheticBuffers, _ time: AudioTimeStamp, isOutputDevice: Bool = true
+) {
+  cycle(
+    rt, captures: false, plays: isOutputDevice, hasInputs: false, inputTime: time,
+    output: output, outputTime: time)
 }
 
 /// A scope whose channels are numbered across `streams` (channels per stream, in buffer order).
@@ -77,7 +113,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
   private static func makeState(
     outChannels: [Int] = [4, 5], inChannel: Int = 6,
     templates: [[Float]] = [[1, 2, 3, 4, 5, 6, 7, 8]],
-    sampleRate: Double = 48_000, captureSeconds: Double = 8
+    sampleRate: Double = 48_000, captureSeconds: Double = 8, shared: Bool = true,
+    stampCapacity: Int = 64
   ) throws -> RTState {
     RTState(
       RTState.Configuration(
@@ -86,7 +123,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
         outputSlots: try outChannels.map {
           try #require(ChannelSlot.slot(forChannel: $0, in: outScope))
         },
-        templates: templates, scheduleCapacity: 16, stampCapacity: 64))
+        templates: templates, scheduleCapacity: 16, stampCapacity: stampCapacity,
+        sharedDevice: shared))
   }
 
   private static func entry(at frame: Int, gain: Float = 0.5, hit: Int = 0) -> ScheduleEntry {
@@ -108,9 +146,9 @@ private func scope(streams: [Int]) -> ScopeInfo {
     let rt = try Self.makeState(outChannels: [4, 5])
     try rt.append([Self.entry(at: 1005)])
     let out = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
-    var time = timeStamp(sample: 1000)
+    let time = timeStamp(sample: 1000)
 
-    ioCycleOutput(rt, out.pointer, &time, isOutputDevice: true)
+    playCycle(rt, out, time)
 
     // Output channels 4 and 5 are channels 2 and 3 (1-based) of the second stream: indices 1 and 2.
     for frame in 0..<16 {
@@ -130,11 +168,11 @@ private func scope(streams: [Int]) -> ScopeInfo {
     try rt.append([Self.entry(at: 1012, gain: 1)])
     let first = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
     let second = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
-    var t1 = timeStamp(sample: 1000)
-    var t2 = timeStamp(sample: 1016)
+    let t1 = timeStamp(sample: 1000)
+    let t2 = timeStamp(sample: 1016)
 
-    ioCycleOutput(rt, first.pointer, &t1, isOutputDevice: true)
-    ioCycleOutput(rt, second.pointer, &t2, isOutputDevice: true)
+    playCycle(rt, first, t1)
+    playCycle(rt, second, t2)
 
     var played: [Float] = []
     for frame in 12..<16 { played.append(first.sample(buffer: 0, frame: frame, channel: 0)) }
@@ -148,46 +186,47 @@ private func scope(streams: [Int]) -> ScopeInfo {
     let rt = try Self.makeState(outChannels: [1])
     try rt.append([Self.entry(at: 1002, gain: 1, hit: 0), Self.entry(at: 1004, gain: 1, hit: 1)])
     let out = SyntheticBuffers(widths: [2, 4], frames: 16)
-    var t1 = timeStamp(sample: 1000)
-    ioCycleOutput(rt, out.pointer, &t1, isOutputDevice: true)
+    let t1 = timeStamp(sample: 1000)
+    playCycle(rt, out, t1)
     // Frame 1004 carries hit 0's third sample (3) and hit 1's first (1).
     #expect(out.sample(buffer: 0, frame: 4, channel: 0) == 4)
     #expect(rt.scheduleCursor.load(ordering: .relaxed) == 0)
 
     let later = SyntheticBuffers(widths: [2, 4], frames: 16)
-    var t2 = timeStamp(sample: 1016)
-    ioCycleOutput(rt, later.pointer, &t2, isOutputDevice: true)
+    let t2 = timeStamp(sample: 1016)
+    playCycle(rt, later, t2)
     #expect(rt.scheduleCursor.load(ordering: .relaxed) == 2)
   }
 
   @Test func aDeviceThatIsNotTheOutputDeviceIsOnlySilenced() throws {
-    let rt = try Self.makeState(outChannels: [1])
+    let rt = try Self.makeState(outChannels: [1], shared: false)
     try rt.append([Self.entry(at: 1000, gain: 1)])
     let out = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
-    var time = timeStamp(sample: 1000)
+    let time = timeStamp(sample: 1000)
 
-    ioCycleOutput(rt, out.pointer, &time, isOutputDevice: false)
+    playCycle(rt, out, time, isOutputDevice: false)
 
     for frame in 0..<16 {
       #expect(out.sample(buffer: 0, frame: frame, channel: 0) == 0)
       #expect(out.sample(buffer: 1, frame: frame, channel: 3) == 0)
     }
-    #expect(rt.outputStamps.count == 0)
+    #expect(rt.outputDeviceStamps.count == 0)
     let started = rt.outputStarted.load(ordering: .relaxed)
     #expect(!started)
   }
 
   @Test func outputStampsAreLoggedWithTheirTimes() throws {
-    let rt = try Self.makeState()
+    let rt = try Self.makeState(shared: false)
     let out = SyntheticBuffers(widths: [2, 4], frames: 16)
-    var t1 = timeStamp(sample: 2000, host: 777, rate: 1.00002)
-    var t2 = timeStamp(sample: 2016, host: 888, rate: 1.00003)
-    ioCycleOutput(rt, out.pointer, &t1, isOutputDevice: true)
-    ioCycleOutput(rt, out.pointer, &t2, isOutputDevice: true)
+    let t1 = timeStamp(sample: 2000, host: 777, rate: 1.00002)
+    let t2 = timeStamp(sample: 2016, host: 888, rate: 1.00003)
+    playCycle(rt, out, t1)
+    playCycle(rt, out, t2)
 
-    #expect(rt.outputStamps.count == 2)
-    let secondPoint = rt.outputStamps.point(at: 1)
-    let second = try #require(secondPoint)
+    #expect(rt.outputDeviceStamps.count == 2)
+    let secondEntry = rt.outputDeviceStamps.entry(at: 1)
+    let secondSides = try #require(secondEntry)
+    let second = try #require(secondSides.output)
     #expect(second.sampleTime == 2016 && second.hostTime == 888 && second.frames == 16)
     #expect(second.rateScalar == 1.00003)
     #expect(rt.outputNextLabel.load(ordering: .relaxed) == 2032)
@@ -204,15 +243,15 @@ private func scope(streams: [Int]) -> ScopeInfo {
       for frame in 0..<16 {
         input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame))
       }
-      var time = timeStamp(sample: Double(start), host: UInt64(start) * 10, rate: 0.99998)
-      ioCycleInput(rt, input.pointer, &time)
+      let time = timeStamp(sample: Double(start), host: UInt64(start) * 10, rate: 0.99998)
+      captureCycle(rt, input, time)
     }
 
     let captured = try rt.readCapture(5000..<5032)
     #expect(captured == (5000..<5032).map { Float($0) })
     #expect(rt.inputFirstLabel.load(ordering: .relaxed) == 5000)
     #expect(rt.inputNextLabel.load(ordering: .relaxed) == 5032)
-    #expect(rt.gapCount.load(ordering: .relaxed) == 0)
+    #expect(Self.everyFault(rt).isEmpty)
 
     // Reading a middle slice, and the stamps that overlap it.
     #expect(try rt.readCapture(5010..<5020) == (5010..<5020).map { Float($0) })
@@ -224,28 +263,36 @@ private func scope(streams: [Int]) -> ScopeInfo {
   @Test func inputStampsAreLogged() throws {
     let rt = try Self.makeState()
     let input = SyntheticBuffers(widths: [2, 4], frames: 16)
-    var t1 = timeStamp(sample: 100, host: 12_345, rate: 0.99999)
-    ioCycleInput(rt, input.pointer, &t1)
+    let t1 = timeStamp(sample: 100, host: 12_345, rate: 0.99999)
+    captureCycle(rt, input, t1)
 
-    #expect(rt.inputStamps.count == 1)
-    let firstPoint = rt.inputStamps.point(at: 0)
-    let point = try #require(firstPoint)
+    #expect(rt.inputDeviceStamps.count == 1)
+    let firstEntry = rt.inputDeviceStamps.entry(at: 0)
+    let firstSides = try #require(firstEntry)
+    let point = try #require(firstSides.input)
     #expect(point.sampleTime == 100 && point.hostTime == 12_345)
     #expect(point.rateScalar == 0.99999 && point.frames == 16)
     #expect(rt.stampLog().input == [point])
   }
 
-  @Test func aSixtyFourFrameJumpOfTheLabelSetsTheGapFlagAndLeavesSilence() throws {
+  /// Every fault the state has recorded, whatever the direction.
+  private static func everyFault(_ rt: RTState) -> [FaultInterval] {
+    rt.faults(overlappingInput: -1_000_000..<10_000_000, output: -1_000_000..<10_000_000)
+  }
+
+  @Test func aSixtyFourFrameJumpOfTheLabelIsOneInputFaultAndLeavesSilence() throws {
     let rt = try Self.makeState()
     let loud = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 0.25)
-    var t1 = timeStamp(sample: 5000)
-    var t2 = timeStamp(sample: 5080)  // 5016 + 64: the next callback arrives 64 frames late
-    ioCycleInput(rt, loud.pointer, &t1)
-    #expect(rt.gapCount.load(ordering: .relaxed) == 0)
-    ioCycleInput(rt, loud.pointer, &t2)
+    let t1 = timeStamp(sample: 5000)
+    let t2 = timeStamp(sample: 5080)  // 5016 + 64: the next callback arrives 64 frames late
+    captureCycle(rt, loud, t1)
+    #expect(Self.everyFault(rt).isEmpty)
+    captureCycle(rt, loud, t2)
 
-    #expect(rt.gapCount.load(ordering: .relaxed) == 1)
-    #expect(rt.lastGapLabel.load(ordering: .relaxed) == 5016)
+    // The missing frames are one interval, in input labels: [expected, label).
+    #expect(
+      Self.everyFault(rt)
+        == [FaultInterval(direction: .input, frames: 5016..<5080, cause: .lostFrames)])
     let captured = try rt.readCapture(5000..<5096)
     #expect(captured[0..<16].allSatisfy { $0 == 0.25 })
     #expect(captured[16..<80].allSatisfy { $0 == 0 })
@@ -257,11 +304,11 @@ private func scope(streams: [Int]) -> ScopeInfo {
     for (offset, gaps) in [(0.0, 0), (0.5, 0), (-0.5, 0), (0.75, 1), (-0.75, 1), (1.0, 1)] {
       let rt = try Self.makeState()
       let input = SyntheticBuffers(widths: [2, 4], frames: 16)
-      var t1 = timeStamp(sample: 9000)
-      var t2 = timeStamp(sample: 9016 + offset)
-      ioCycleInput(rt, input.pointer, &t1)
-      ioCycleInput(rt, input.pointer, &t2)
-      #expect(rt.gapCount.load(ordering: .relaxed) == gaps, "offset \(offset)")
+      let t1 = timeStamp(sample: 9000)
+      let t2 = timeStamp(sample: 9016 + offset)
+      captureCycle(rt, input, t1)
+      captureCycle(rt, input, t2)
+      #expect(Self.everyFault(rt).count == gaps, "offset \(offset)")
     }
   }
 
@@ -274,13 +321,154 @@ private func scope(streams: [Int]) -> ScopeInfo {
       for frame in 0..<16 {
         input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame))
       }
-      var time = timeStamp(sample: Double(start))
-      ioCycleInput(rt, input.pointer, &time)
+      let time = timeStamp(sample: Double(start))
+      captureCycle(rt, input, time)
     }
     // 15 callbacks of 16 frames: 240 captured. The newest 100 are still there.
     #expect(try rt.readCapture(200..<240) == (200..<240).map { Float($0) })
     #expect(throws: SoundPingError.self) { _ = try rt.readCapture(100..<140) }
     #expect(throws: SoundPingError.self) { _ = try rt.readCapture(230..<250) }
+  }
+
+  // MARK: Stamp entries (WR-03, IN-08)
+
+  /// Output labels this far ahead of the input labels, like a real duplex device.
+  private static let offset = 44.0
+  private static let validFlags: AudioTimeStampFlags = [
+    .sampleTimeValid, .hostTimeValid, .rateScalarValid,
+  ]
+
+  /// Runs `count` duplex callbacks of 16 frames. `adjust` can spoil one callback's times or buffers.
+  private static func duplexRun(
+    _ rt: RTState, count: Int,
+    adjust: (Int, inout AudioTimeStamp, inout AudioTimeStamp, inout SyntheticBuffers) -> Void = {
+      _, _, _, _ in
+    }
+  ) {
+    for i in 0..<count {
+      let input = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 0.25)
+      var output = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
+      var inTime = timeStamp(sample: 1000 + Double(i * 16), host: UInt64(1000 + i * 16) * 10)
+      var outTime = timeStamp(
+        sample: 1000 + Double(i * 16) + offset, host: UInt64(1000 + i * 16) * 10 + 7)
+      adjust(i, &inTime, &outTime, &output)
+      cycle(rt, input: input, inputTime: inTime, output: output, outputTime: outTime)
+    }
+  }
+
+  @Test func aSkippedOutputSideNeverShiftsLaterInputOutputPairs() throws {
+    // Callback 4 loses its output side two ways: a time without sampleTimeValid, and a buffer list
+    // with a zero-channel buffer. Under index pairing every pair after it was a buffer off.
+    for variant in 0..<2 {
+      let rt = try Self.makeState()
+      Self.duplexRun(rt, count: 10) { i, _, outTime, output in
+        guard i == 4 else { return }
+        if variant == 0 {
+          outTime.mFlags = [.hostTimeValid, .rateScalarValid]
+        } else {
+          output = SyntheticBuffers(widths: [0], frames: 16, fill: 9)
+        }
+      }
+      let log = rt.stampLog()
+      #expect(log.input.count == 10, "variant \(variant)")
+      #expect(log.output.count == 9, "variant \(variant)")
+      #expect(log.ioOffsetFrames.count == 9, "variant \(variant)")
+      #expect(log.ioOffsetFrames.allSatisfy { $0 == Self.offset }, "variant \(variant)")
+    }
+  }
+
+  @Test func aCallbackWithoutAValidHostTimeIsCapturedButNotStamped() throws {
+    let rt = try Self.makeState()
+    Self.duplexRun(rt, count: 10) { i, inTime, _, _ in
+      if i == 4 { inTime.mFlags = [.sampleTimeValid, .rateScalarValid] }
+    }
+    // Its audio is captured at its label and the label moves on.
+    #expect(rt.inputNextLabel.load(ordering: .relaxed) == 1160)
+    #expect(try rt.readCapture(1064..<1080).allSatisfy { $0 == 0.25 })
+    // Its entry has no input side, so the offsets and the input list skip it.
+    let log = rt.stampLog()
+    #expect(log.input.count == 9)
+    #expect(log.input.allSatisfy { $0.hostTime > 0 })
+    #expect(log.ioOffsetFrames.count == 9 && log.ioOffsetFrames.allSatisfy { $0 == Self.offset })
+    // A window across it sees a jump in the stamps' sample times, so the correlator refuses it.
+    let stamps = rt.callbackStamps(covering: 1048..<1096)
+    #expect(Correlator.hasDiscontinuity(stamps))
+    // A window clear of it is clean.
+    #expect(!Correlator.hasDiscontinuity(rt.callbackStamps(covering: 1096..<1150)))
+  }
+
+  @Test func aCallbackWithoutAValidSampleTimeCapturesNothing() throws {
+    let rt = try Self.makeState()
+    Self.duplexRun(rt, count: 6) { i, inTime, _, _ in
+      if i == 3 { inTime.mFlags = [.hostTimeValid, .rateScalarValid] }
+    }
+    // The skipped callback's frames (1048..<1064) read as the zero-filled gap the next callback leaves.
+    #expect(rt.inputNextLabel.load(ordering: .relaxed) == 1096)
+    let captured = try rt.readCapture(1000..<1096)
+    #expect(captured[48..<64].allSatisfy { $0 == 0 })
+    #expect(captured[0..<48].allSatisfy { $0 == 0.25 })
+    #expect(captured[64..<96].allSatisfy { $0 == 0.25 })
+    #expect(rt.stampLog().input.count == 5)
+  }
+
+  @Test func anOutputTimeWithoutAValidSampleTimeMixesNothingAndMovesNothing() throws {
+    let rt = try Self.makeState(outChannels: [1])
+    try rt.append([Self.entry(at: 1000, gain: 1)])
+    let output = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 9)
+    let time = timeStamp(sample: 1000, flags: [.hostTimeValid, .rateScalarValid])
+    playCycle(rt, output, time)
+
+    for frame in 0..<16 {
+      #expect(output.sample(buffer: 0, frame: frame, channel: 0) == 0)
+    }
+    #expect(rt.outputNextLabel.load(ordering: .relaxed) == 0)
+    let started = rt.outputStarted.load(ordering: .relaxed)
+    #expect(!started)
+    #expect(rt.stampLog().output.isEmpty)
+  }
+
+  @Test func aMissingRateScalarIsLoggedAsZero() throws {
+    let rt = try Self.makeState()
+    Self.duplexRun(rt, count: 1) { _, inTime, outTime, _ in
+      inTime.mFlags = [.sampleTimeValid, .hostTimeValid]
+      outTime.mFlags = [.sampleTimeValid, .hostTimeValid]
+    }
+    let log = rt.stampLog()
+    #expect(log.input.map(\.rateScalar) == [0] && log.output.map(\.rateScalar) == [0])
+  }
+
+  @Test func twoDevicesLogTheirOwnRingsAndNeverPair() throws {
+    let rt = try Self.makeState(shared: false)
+    for i in 0..<12 {
+      let input = SyntheticBuffers(widths: [2, 4], frames: 16)
+      captureCycle(rt, input, timeStamp(sample: 7000 + Double(i * 16), host: 100 + UInt64(i)))
+      // The output device runs on other labels and skips its fifth callback.
+      if i != 4 {
+        let output = SyntheticBuffers(widths: [2, 4], frames: 16)
+        playCycle(
+          rt, output, timeStamp(sample: 90_000 + Double(i * 16), host: 200 + UInt64(i)))
+      }
+    }
+    let log = rt.stampLog()
+    #expect(log.ioOffsetFrames.isEmpty)
+    #expect(log.input.count == 12 && log.output.count == 11)
+    #expect(log.input.allSatisfy { $0.sampleTime < 10_000 })
+    #expect(log.output.allSatisfy { $0.sampleTime >= 90_000 })
+    // Output fields of the input stamps come from nowhere: no ordinal lookup across devices.
+    let stamps = rt.callbackStamps(covering: 7000..<7192)
+    #expect(stamps.count == 12)
+    #expect(stamps.allSatisfy { $0.outputSampleTime == 0 && $0.outputHostTime == 0 })
+  }
+
+  @Test func aWrappedStampRingKeepsTheNewestEntriesAndExactOffsets() throws {
+    let rt = try Self.makeState(stampCapacity: 8)
+    Self.duplexRun(rt, count: 20)
+    let log = rt.stampLog()
+    #expect(log.input.count == 8 && log.output.count == 8)
+    #expect(log.ioOffsetFrames.count == 8)
+    #expect(log.ioOffsetFrames.allSatisfy { $0 == Self.offset })
+    #expect(log.input.first?.sampleTime == Double(1000 + 12 * 16))
+    #expect(rt.inputDeviceStamps.entry(at: 3) == nil, "an overwritten ordinal is refused")
   }
 
   // MARK: Schedule ring

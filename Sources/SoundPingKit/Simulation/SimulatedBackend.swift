@@ -214,6 +214,8 @@ public actor SimulatedBackend: AudioBackend {
   private var hits: [ScheduledHit] = []
   /// Input frame where each simulated xrun drops `xrunFrames` frames, ascending.
   private var xrunGaps: [Int64] = []
+  /// The gaps in `xrunGaps` that an overload fault caused, as opposed to a plain xrun.
+  private var overloadGaps: Set<Int64> = []
   /// Device events waiting for virtual time to reach their input frame, ascending.
   private var pendingEvents: [PendingEvent] = []
   private var outputUID = ""
@@ -270,6 +272,7 @@ public actor SimulatedBackend: AudioBackend {
     // before survives into the new open.
     hits = []
     xrunGaps = []
+    overloadGaps = []
     pendingEvents = []
     started = false
     inChannel = setup.inChannel
@@ -329,6 +332,8 @@ public actor SimulatedBackend: AudioBackend {
     hits.sort { $0.outputFrame < $1.outputFrame }
     try validateFaultIndices()
     xrunGaps = faultGaps()
+    let overloadHits = Set(scenario.faults.filter { $0.kind == .overload }.map(\.atHit))
+    overloadGaps = Set(hits.filter { overloadHits.contains($0.index) }.compactMap(gapFrame(of:)))
     pendingEvents = faultEvents()
   }
 
@@ -351,8 +356,8 @@ public actor SimulatedBackend: AudioBackend {
     }
   }
 
-  /// An overload is an xrun that also announces itself on the event stream, the way the HAL's
-  /// processor-overload notification does; the lost frames reject the hit through the stamps.
+  /// An overload is an xrun that is recorded as an overload fault, the way the HAL's
+  /// processor-overload notification is; the lost frames also show in the stamps.
   private var xrunIndices: Set<Int> {
     Set(scenario.xrunHits).union(scenario.faults.filter { $0.kind == .overload }.map(\.atHit))
   }
@@ -401,11 +406,8 @@ public actor SimulatedBackend: AudioBackend {
         events.append(
           PendingEvent(frame: frame, event: .streamConfigChanged(uid: outputUID), fatal: true))
       case .overload:
-        if let gap = gapFrame(of: hit) {
-          events.append(
-            PendingEvent(
-              frame: gap, event: .overload(uid: inputUID, atInputFrame: gap), fatal: false))
-        }
+        // Not an event: the gap it causes is an overload fault, answered by `faults(...)`.
+        break
       }
     }
     return events.sorted { $0.frame < $1.frame }
@@ -490,6 +492,22 @@ public actor SimulatedBackend: AudioBackend {
     return out
   }
 
+  /// Every xrun gap the virtual time has gone past is an input fault of `xrunFrames` frames. The
+  /// simulator has no output glitches. Overlap, not containment, as everywhere.
+  public func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async
+    -> [FaultInterval]
+  {
+    xrunGaps.filter { $0 < framesProcessed }.compactMap { gap in
+      let frames = gap..<(gap + Self.xrunFrames)
+      guard frames.lowerBound < input.upperBound, frames.upperBound > input.lowerBound else {
+        return nil
+      }
+      return FaultInterval(
+        direction: .input, frames: frames,
+        cause: overloadGaps.contains(gap) ? .overload : .lostFrames)
+    }
+  }
+
   public func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
     guard !range.isEmpty else { return [] }
     let buffer = Int64(scenario.bufferFrames)
@@ -516,6 +534,7 @@ public actor SimulatedBackend: AudioBackend {
     var log = StampLog()
     log.input.reserveCapacity(callbacks)
     log.output.reserveCapacity(callbacks)
+    if !twoDevices { log.ioOffsetFrames.reserveCapacity(callbacks) }
     for index in 0..<callbacks {
       let stamp = callbackStamp(index: Int64(index))
       log.input.append(
@@ -526,6 +545,8 @@ public actor SimulatedBackend: AudioBackend {
         TimelinePoint(
           sampleTime: stamp.outputSampleTime, hostTime: stamp.outputHostTime,
           rateScalar: stamp.outputRateScalar, frames: stamp.frames))
+      // One callback of one device: its output label minus its input label.
+      if !twoDevices { log.ioOffsetFrames.append(stamp.outputSampleTime - stamp.inputSampleTime) }
     }
     return log
   }

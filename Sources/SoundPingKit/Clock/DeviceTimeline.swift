@@ -15,15 +15,23 @@ public struct TimelinePoint: Codable, Sendable, Equatable {
   }
 }
 
-/// Every callback's timestamps of a run, one entry per callback per direction. A duplex device
-/// contributes the same callbacks to both lists; two devices contribute one list each.
+/// Every callback's timestamps of a run. `input` and `output` are per direction: a callback whose
+/// side was skipped or untimestamped is missing from its list, so the two lists can differ in
+/// length and must never be paired by index (WR-03). The only per-callback pairing is
+/// `ioOffsetFrames`, which comes from single log entries that carry both sides of one callback.
 public struct StampLog: Sendable, Equatable {
   public var input: [TimelinePoint]
   public var output: [TimelinePoint]
+  /// On a single duplex device, per callback that has both sides, how far its output sample label
+  /// runs ahead of its input label. Empty on two devices, whose labels are unrelated.
+  public var ioOffsetFrames: [Double]
 
-  public init(input: [TimelinePoint] = [], output: [TimelinePoint] = []) {
+  public init(
+    input: [TimelinePoint] = [], output: [TimelinePoint] = [], ioOffsetFrames: [Double] = []
+  ) {
     self.input = input
     self.output = output
+    self.ioOffsetFrames = ioOffsetFrames
   }
 
   public var isEmpty: Bool { input.isEmpty || output.isEmpty }
@@ -50,6 +58,7 @@ public struct DeviceTimeline: Sendable {
   /// Host ticks relative to `hostBase`, so the fit never subtracts two huge Doubles.
   private let hostOffsets: [Double]
   private let rateScalars: [Double]
+  private let lastFrames: Int
   private let hostBase: UInt64
   private let sampleRate: Double
   private let clock: HostClock
@@ -67,11 +76,18 @@ public struct DeviceTimeline: Sendable {
     self.sampleTimes = ordered.map(\.sampleTime)
     self.hostOffsets = ordered.map { Double(Int64(bitPattern: $0.hostTime &- base)) }
     self.rateScalars = ordered.map(\.rateScalar)
+    self.lastFrames = ordered[ordered.count - 1].frames
     self.sampleRate = sampleRate
     self.clock = clock
   }
 
   public var count: Int { sampleTimes.count }
+
+  /// The sample times this timeline has callbacks for: from the first callback's first frame to the
+  /// last callback's end. Outside it a query would extrapolate, which a judgement must not do.
+  public var coveredSamples: ClosedRange<Double> {
+    sampleTimes[0]...(sampleTimes[sampleTimes.count - 1] + Double(lastFrames))
+  }
 
   /// The host time, in ticks, at which the device's sample clock reads `sample`.
   public func hostTicks(forSample sample: Double) -> Double {

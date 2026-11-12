@@ -22,28 +22,106 @@ private func nearestLabel(_ sampleTime: Double) -> Int {
   sampleTime >= 0 ? Int(sampleTime + 0.5) : -Int(0.5 - sampleTime)
 }
 
-/// Captures the selected input channel into the capture ring at its sample label, and logs the
-/// callback's input stamp. A label that is not where the previous callback left off (beyond half a
-/// frame, compared in Double) counts as a discontinuity: the gap is zero-filled, counted, and
-/// remembered for the engine, which rejects every hit whose window touches it (ENG-07).
+// CoreAudio's kAudioTimeStamp*Valid bits, compared as raw bits: an OptionSet `contains` goes through
+// a generic witness that `@_noLocks` may refuse.
+private let sampleTimeValidBit: UInt32 = 1 << 0
+private let hostTimeValidBit: UInt32 = 1 << 1
+private let rateScalarValidBit: UInt32 = 1 << 2
+
+/// One direction of one callback as the IOProc holds it: plain scalars, no optionals or generics,
+/// so building one is free of metadata lookups. Zero frames means the callback had no such side.
+struct StampSide: Sendable, Equatable {
+  var sampleTime = 0.0
+  var hostTime: UInt64 = 0
+  var rateScalar = 0.0
+  var frames = 0
+
+  var isPresent: Bool { frames > 0 }
+  var point: TimelinePoint? {
+    isPresent
+      ? TimelinePoint(
+        sampleTime: sampleTime, hostTime: hostTime, rateScalar: rateScalar, frames: frames) : nil
+  }
+}
+
+// Cause codes a fault ring stores; `RTState.faults` maps them back to `FaultInterval.Cause`. Plain
+// module-level constants, because a static property read from another file is a function call the
+// `@_noLocks` check cannot see into.
+let faultLostFramesCode = 0
+let faultInvalidTimestampCode = 1
+let faultOverloadCode = 2
+
+/// What one direction of one callback leaves behind: the stamp it may log (absent when the callback
+/// could not be timestamped), and where the label stands afterwards. The label is published by
+/// `ioCycle`, after the stamp, so a reader that sees the new label also finds the callback's stamp.
+struct CycleSide {
+  var point = StampSide()
+  var nextLabel = 0
+  var advanced = false
+}
+
+/// The one entry point of the IOProc. Runs the capture side when this device captures and the
+/// output side when it has outputs, then logs exactly one stamp entry for the callback: both sides
+/// on a duplex device, so a skipped or untimestamped side can never shift the pairing of the others
+/// (WR-03). A separate input and output device each log to their own ring.
 @_noLocks
-func ioCycleInput(
-  _ rt: RTState, _ data: UnsafePointer<AudioBufferList>, _ time: UnsafePointer<AudioTimeStamp>
+func ioCycle(
+  _ rt: RTState, captures: Bool, plays: Bool, hasInputs: Bool, hasOutputs: Bool,
+  inputData: UnsafePointer<AudioBufferList>, inputTime: UnsafePointer<AudioTimeStamp>,
+  outputData: UnsafeMutablePointer<AudioBufferList>, outputTime: UnsafePointer<AudioTimeStamp>
 ) {
-  guard rt.hasInput else { return }
+  var input = CycleSide()
+  var output = CycleSide()
+  if captures, hasInputs { input = captureSide(rt, inputData, inputTime) }
+  if hasOutputs { output = playSide(rt, outputData, outputTime, isOutputDevice: plays) }
+
+  // The stamp goes in before the labels move.
+  if captures {
+    rt.inputDeviceStamps.append(input: input.point, output: output.point)
+  } else {
+    rt.outputDeviceStamps.append(input: StampSide(), output: output.point)
+  }
+  if input.advanced {
+    rt.inputNextLabel.store(input.nextLabel, ordering: .releasing)
+    rt.inputStarted.store(true, ordering: .releasing)
+  }
+  if output.advanced {
+    rt.outputNextLabel.store(output.nextLabel, ordering: .releasing)
+    rt.outputStarted.store(true, ordering: .releasing)
+  }
+}
+
+/// Captures the selected input channel into the capture ring at its sample label. A label that is
+/// not where the previous callback left off (beyond half a frame, compared in Double) counts as a
+/// discontinuity: the gap is zero-filled and recorded as its own fault interval, which the engine
+/// reads to reject every hit whose window it overlaps (ENG-07, WR-01).
+///
+/// A callback whose time lacks `sampleTimeValid` is not captured at all (IN-08): its frames show up
+/// as a gap at the next valid callback. One without `hostTimeValid` is captured but yields no
+/// stamp, so a host time of 0 never reaches the timelines.
+@_noLocks
+private func captureSide(
+  _ rt: RTState, _ data: UnsafePointer<AudioBufferList>, _ time: UnsafePointer<AudioTimeStamp>
+) -> CycleSide {
+  var side = CycleSide()
+  guard rt.hasInput else { return side }
   let slot = rt.inputSlot
   let list = UnsafeRawPointer(data)
-  guard slot.buffer < Int(list.load(as: UInt32.self)) else { return }
+  guard slot.buffer < Int(list.load(as: UInt32.self)) else { return side }
   let buffer = (list + rt.bufferListHeader + slot.buffer * rt.bufferStride).load(
     as: AudioBuffer.self)
   let channels = Int(buffer.mNumberChannels)
-  guard channels > 0, channels == slot.channelsInBuffer, let source = buffer.mData else { return }
+  guard channels > 0, channels == slot.channelsInBuffer, let source = buffer.mData else {
+    return side
+  }
   let frames = Int(buffer.mDataByteSize) / (channels * bytesPerSample)
   let capacity = rt.captureCapacity
-  guard frames > 0, frames <= capacity else { return }
+  guard frames > 0, frames <= capacity else { return side }
 
+  let flags = time.pointee.mFlags.rawValue
+  guard flags & sampleTimeValidBit != 0 else { return side }
   let sampleTime = time.pointee.mSampleTime
-  guard sampleTime.isFinite, abs(sampleTime) < 1e15 else { return }
+  guard sampleTime.isFinite, abs(sampleTime) < 1e15 else { return side }
   let label = nearestLabel(sampleTime)
 
   var first = rt.inputFirstLabel.load(ordering: .relaxed)
@@ -53,10 +131,12 @@ func ioCycleInput(
   } else {
     let expected = rt.inputNextLabel.load(ordering: .relaxed)
     if abs(sampleTime - Double(expected)) > 0.5 {
-      rt.lastGapLabel.store(expected, ordering: .relaxed)
-      rt.gapCount.wrappingAdd(1, ordering: .releasing)
-      // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
+      // Frames that never arrived (or arrived twice) are recorded as their own interval, in input
+      // labels, before the label that follows them is published (WR-01).
       if label > expected {
+        rt.inputFaults.append(
+          lower: expected, upper: label, cause: faultLostFramesCode)
+        // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
         let missing = Swift.min(label - expected, capacity)
         var position = (label - missing - first) % capacity
         if position < 0 { position += capacity }
@@ -67,6 +147,9 @@ func ioCycleInput(
           if position == capacity { position = 0 }
           filled += 1
         }
+      } else {
+        rt.inputFaults.append(
+          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
       }
     }
   }
@@ -82,21 +165,30 @@ func ioCycleInput(
     frame += 1
   }
 
-  rt.inputStamps.append(
-    sampleTime: sampleTime, hostTime: time.pointee.mHostTime, rateScalar: time.pointee.mRateScalar,
-    frames: frames)
-  rt.inputNextLabel.store(label + frames, ordering: .releasing)
-  rt.inputStarted.store(true, ordering: .releasing)
+  side.nextLabel = label + frames
+  side.advanced = true
+  if flags & hostTimeValidBit != 0 {
+    side.point = StampSide(
+      sampleTime: sampleTime, hostTime: time.pointee.mHostTime,
+      rateScalar: flags & rateScalarValidBit != 0 ? time.pointee.mRateScalar : 0, frames: frames)
+  } else {
+    // Its audio is kept, but no hit is measured across a callback that cannot be timestamped (IN-08).
+    rt.inputFaults.append(
+      lower: label, upper: label + frames, cause: faultInvalidTimestampCode)
+  }
+  return side
 }
 
-/// Zeroes every output buffer, then (on the output device) logs the output stamp and mixes every
-/// scheduled hit that overlaps this callback, template times gain, into the selected output
-/// channels. Hits sum where they overlap; every other channel stays silent.
+/// Zeroes every output buffer, then (on the output device) mixes every scheduled hit that overlaps
+/// this callback, template times gain, into the selected output channels. Hits sum where they
+/// overlap; every other channel stays silent. A time without `sampleTimeValid` mixes nothing and
+/// logs nothing (IN-08); one without `hostTimeValid` mixes but yields no stamp.
 @_noLocks
-func ioCycleOutput(
+private func playSide(
   _ rt: RTState, _ data: UnsafeMutablePointer<AudioBufferList>,
   _ time: UnsafePointer<AudioTimeStamp>, isOutputDevice: Bool
-) {
+) -> CycleSide {
+  var side = CycleSide()
   let list = UnsafeMutableRawPointer(data)
   let bufferCount = Int(list.load(as: UInt32.self))
   var b = 0
@@ -113,24 +205,46 @@ func ioCycleOutput(
     }
     b += 1
   }
-  guard isOutputDevice, bufferCount > 0 else { return }
+  guard isOutputDevice, bufferCount > 0 else { return side }
 
+  let flags = time.pointee.mFlags.rawValue
+  guard flags & sampleTimeValidBit != 0 else { return side }
   let sampleTime = time.pointee.mSampleTime
-  guard sampleTime.isFinite, abs(sampleTime) < 1e15 else { return }
+  guard sampleTime.isFinite, abs(sampleTime) < 1e15 else { return side }
   let label = nearestLabel(sampleTime)
 
   // The callback length, from the first buffer.
   let head = (list + rt.bufferListHeader).load(as: AudioBuffer.self)
   let headChannels = Int(head.mNumberChannels)
-  guard headChannels > 0 else { return }
+  guard headChannels > 0 else { return side }
   let frames = Int(head.mDataByteSize) / (headChannels * bytesPerSample)
-  guard frames > 0 else { return }
+  guard frames > 0 else { return side }
 
-  rt.outputStamps.append(
-    sampleTime: sampleTime, hostTime: time.pointee.mHostTime, rateScalar: time.pointee.mRateScalar,
-    frames: frames)
-  rt.outputNextLabel.store(label + frames, ordering: .releasing)
-  rt.outputStarted.store(true, ordering: .releasing)
+  // The output direction has the same continuity rule as the input: a label that is not where the
+  // previous callback left off means frames were skipped or repeated, and a chirp that was playing
+  // across them is not the chirp that was scheduled (WR-01).
+  if rt.outputStarted.load(ordering: .relaxed) {
+    let expected = rt.outputNextLabel.load(ordering: .relaxed)
+    if abs(sampleTime - Double(expected)) > 0.5 {
+      if label > expected {
+        rt.outputFaults.append(lower: expected, upper: label, cause: faultLostFramesCode)
+      } else {
+        rt.outputFaults.append(
+          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
+      }
+    }
+  }
+
+  side.nextLabel = label + frames
+  side.advanced = true
+  if flags & hostTimeValidBit != 0 {
+    side.point = StampSide(
+      sampleTime: sampleTime, hostTime: time.pointee.mHostTime,
+      rateScalar: flags & rateScalarValidBit != 0 ? time.pointee.mRateScalar : 0, frames: frames)
+  } else {
+    rt.outputFaults.append(
+      lower: label, upper: label + frames, cause: faultInvalidTimestampCode)
+  }
 
   // Entries before the cursor have finished playing. Hits are ascending, so the scan stops at the
   // first one that starts after this callback.
@@ -178,4 +292,5 @@ func ioCycleOutput(
       }
     }
   }
+  return side
 }

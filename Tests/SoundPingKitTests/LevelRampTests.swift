@@ -37,6 +37,9 @@ private actor GlitchedWindowsBackend: AudioBackend {
     return stamps
   }
   func stampLog() async -> StampLog { await inner.stampLog() }
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async -> [FaultInterval] {
+    await inner.faults(overlappingInput: input, output: output)
+  }
   func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
   func stop() async { await inner.stop() }
 }

@@ -18,7 +18,7 @@ struct ProbePlayer {
     var record: ProbeRecord
     /// The window held nothing but exact zeros (or nothing at all): no signal path exists.
     var silent: Bool
-    /// An overload or a lost-frames discontinuity touched the window, so the probe says nothing
+    /// A recorded fault or a lost-frames discontinuity touched the window, so the probe says nothing
     /// about how loud the chirp is: it reads as confidence 0 and no peak, like a missing chirp.
     var glitched: Bool
   }
@@ -49,9 +49,9 @@ struct ProbePlayer {
     let record = ProbeRecord(
       index: hit.index, levelDbfs: level, confidence: confidence,
       peakDbfs: LevelRamp.dbfs(ofAbsolutePeak: heard.peakAbs))
-    var glitched = heard.overloaded
+    var glitched = heard.faulted
     if case .rejected(.discontinuity) = heard.detection { glitched = true }
     return Played(
-      record: record, silent: !heard.overloaded && heard.peakAbs == 0, glitched: glitched)
+      record: record, silent: !heard.faulted && heard.peakAbs == 0, glitched: glitched)
   }
 }

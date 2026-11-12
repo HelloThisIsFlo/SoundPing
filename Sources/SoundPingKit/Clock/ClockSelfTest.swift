@@ -49,6 +49,11 @@ public struct ClockSelfTestResult: Codable, Sendable, Equatable {
 ///
 /// The host path always goes through the generic per-direction timelines that two-device runs use,
 /// never through the duplex callback's own pair of stamps (RESEARCH L372).
+///
+/// A hit is judged only when both of its samples lie inside the callbacks the stamp log still
+/// holds (`DeviceTimeline.coveredSamples`). A ring that wrapped on a long run has forgotten the
+/// early callbacks, and a timeline would extrapolate across the hole and could write a false FAIL;
+/// those hits are skipped, not extrapolated (WR-03). `n` says how many were judged.
 public enum ClockSelfTest {
   public static func evaluate(
     hits: [HitRecord], stampLog: StampLog, sampleRate: Double, hostClock: HostClock,
@@ -68,6 +73,9 @@ public enum ClockSelfTest {
       guard let path = hit.latencyFrames else { continue }
       let outputSample = Double(hit.outputFrame)
       let inputSample = outputSample + path
+      guard output.coveredSamples.contains(outputSample),
+        input.coveredSamples.contains(inputSample)
+      else { continue }
       let host = hostPathFrames(
         outputSample: outputSample, inputSample: inputSample, output: output, input: input,
         sampleRate: sampleRate, clock: hostClock)

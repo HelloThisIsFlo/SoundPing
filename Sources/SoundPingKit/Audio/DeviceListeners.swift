@@ -6,8 +6,9 @@ import Synchronization
 ///
 /// A rate, buffer size or stream layout that differs from what the run opened with, a device that
 /// is no longer alive or no longer listed, and an IO that stopped on its own all abort the run: a
-/// number measured across such a change would hide an offset. A processor overload only rejects the
-/// hits whose window it touched. Every notification is compared with the value the run started
+/// number measured across such a change would hide an offset. A processor overload is not an event:
+/// it is written into the run state as a fault interval (`RTState.noteOverload`) that rejects the
+/// hits it overlaps. Every notification is compared with the value the run started
 /// with before it becomes an event, so another app changing its own buffer size on a shared device
 /// (a per-process property) does not abort anything.
 ///
@@ -70,7 +71,16 @@ final class DeviceListeners: Sendable {
     var uid: String
     /// The buffer size this process was given, in frames.
     var bufferFrames: Int
+    /// Which directions this device's IOProc runs, so an overload lands in the right label space.
+    var captures: Bool
+    var plays: Bool
   }
+
+  /// How far before the overload notification's own position the fault interval starts, at least.
+  /// The HAL says 'over' some time after the glitch; this is a best-effort bound on that delay, not
+  /// a measured one, and a device that notifies later than this slips a hit past (requires human
+  /// verification on hardware). `HitListener.faultSettleMs` is its counterpart on the waiting side.
+  static let overloadLookbackMs = 20.0
 
   private struct Registration: @unchecked Sendable {
     var object: AudioObjectID
@@ -137,10 +147,15 @@ final class DeviceListeners: Sendable {
         }
       }
       // 'over'
+      let lookback = Swift.max(
+        2 * device.bufferFrames, Int((Self.overloadLookbackMs / 1000 * rate).rounded(.up)))
+      let captures = device.captures
+      let plays = device.plays
+      let bufferFrames = device.bufferFrames
       add(id, kAudioDeviceProcessorOverload) { [stopped] in
         guard !stopped.isSet else { return }
-        let frame = Int64(rt.inputNextLabel.load(ordering: .acquiring))
-        sink.yield(.overload(uid: uid, atInputFrame: frame))
+        rt.noteOverload(
+          onInput: captures, onOutput: plays, lookbackFrames: lookback, bufferFrames: bufferFrames)
       }
       // 'stpd'
       add(id, kAudioDevicePropertyIOStoppedAbnormally) { [stopped] in
