@@ -47,7 +47,7 @@ struct RunsCommand: AsyncParsableCommand {
     private static func writeJSON(_ runs: [RunListing]) throws {
       var data = try RunJSON.fileEncoder().encode(Envelope(runs: runs))
       data.append(0x0A)
-      FileHandle.standardOutput.write(data)
+      Output.writeData(data)
     }
 
     /// One row per run: BUFFER (SoundPing's own buffer part, calculated), PATH (the measured
@@ -103,7 +103,7 @@ struct RunsCommand: AsyncParsableCommand {
           flag: store, environment: ProcessInfo.processInfo.environment)
         let runStore = RunStore(paths: paths)
         if json {
-          FileHandle.standardOutput.write(try runStore.loadBytes(run))
+          Output.writeData(try runStore.loadBytes(run))
         } else {
           Self.writeSummary(try runStore.load(run))
         }

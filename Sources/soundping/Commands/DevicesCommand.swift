@@ -6,7 +6,7 @@ import SoundPingKit
 func writeJSONLine<T: Encodable>(_ value: T) throws {
   var data = try RunJSON.fileEncoder().encode(value)
   data.append(0x0A)
-  FileHandle.standardOutput.write(data)
+  Output.writeData(data)
 }
 
 /// `soundping devices` (ENG-01, D-08): every audio and MIDI device, by the IDs selectors accept.
