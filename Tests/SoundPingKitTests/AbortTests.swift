@@ -90,6 +90,50 @@ private actor RouteChangeBackend: AudioBackend {
   }
 }
 
+/// Forwards to the simulator, but from the second `open` on reports the built-in output on its
+/// headphone data source: headphones plugged in between two channels of a probe, while no backend
+/// was watching (WR-15). Remembers what was scheduled after that switch.
+private actor RouteBetweenOpensBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private var opens = 0
+  private(set) var scheduledAfterSwitch = 0
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario) {
+    inner = SimulatedBackend(scenario: scenario)
+    events = inner.events
+  }
+
+  var openCount: Int { opens }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    var info = try await inner.open(setup, templates: templates)
+    opens += 1
+    if opens > 1 { info.outputDevice?.output?.dataSource = "hdpn" }
+    return info
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws {
+    if opens > 1 { scheduledAfterSwitch += hits.count }
+    try await inner.schedule(hits)
+  }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    try await inner.waitUntilCaptured(throughInputFrame: frame)
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    await inner.stamps(covering: range)
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async -> [FaultInterval] {
+    await inner.faults(overlappingInput: input, output: output)
+  }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async { await inner.stop() }
+}
+
 @Suite struct AbortTests {
   private struct Outcome {
     var events: [RunEvent]
@@ -380,6 +424,33 @@ private actor RouteChangeBackend: AudioBackend {
     }
     #expect(thrown?.kind == .deviceChanged)
     #expect(thrown?.code == "outputRouteChanged")
+  }
+
+  @Test func headphonesPluggedInBetweenTwoProbedChannelsEndTheProbe() async throws {
+    // The built-in speakers get the probe's -18 dBFS; the next channel's open sees the headphone
+    // source. It must not keep probing at -18 into the headphones (WR-15).
+    let speakers = SimulatedCatalog.macSpeakers
+    #expect(speakers.output?.dataSource == "ispk")
+    let scarlett = SimulatedCatalog.scarlett
+    let setup = ResolvedSetup(
+      output: speakers.ref, input: scarlett.ref, outChannels: [1, 2], inChannel: 0,
+      autoInChannel: true)
+    let backend = RouteBetweenOpensBackend(
+      scenario: Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 7, seed: 3))
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: backend, setup: setup, channels: Array((scarlett.input?.channels ?? []).prefix(3)))
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    #expect(thrown?.kind == .deviceChanged)
+    #expect(thrown?.code == "outputRouteChanged")
+    #expect(thrown?.context["property"] == "dataSource")
+    #expect(thrown?.context["from"] == "ispk")
+    #expect(thrown?.context["to"] == "hdpn")
+    #expect(await backend.openCount == 2, "the probe ends at the first reopen")
+    #expect(await backend.scheduledAfterSwitch == 0, "nothing is played after the switch")
   }
 
   // MARK: A buffer size that settles at the start is adopted (WR-05)

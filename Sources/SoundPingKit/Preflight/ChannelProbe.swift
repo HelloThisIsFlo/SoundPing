@@ -99,7 +99,8 @@ public struct ChannelProbe: Sendable {
     // Refuses a bad `--max-level` before anything plays; the loudness is decided once the output
     // device is known, before the first sound.
     if let maxLevel = options.maxLevelDbfs { _ = try LevelRamp.validatedMaxLevel(maxLevel) }
-    var loudness: LevelRamp.Loudness?
+    // The loudness decided at the first open, and the output data source it was decided with.
+    var decided: (loudness: LevelRamp.Loudness, dataSource: String?)?
     let nominal = try StimulusLibrary.template(id: templateId, sampleRate: 48_000)
     let checks = Preflight(resolver: resolver)
 
@@ -115,17 +116,30 @@ public struct ChannelProbe: Sendable {
 
       let info = try await backend.open(channelSetup, templates: [nominal])
       let opened = channelSetup
-      if position == 0 {
-        // The output device is the same for every channel, so it is classified once, before the
-        // first sound (CR-02): headphones keep their -30 dBFS ceiling during the probe, whatever
-        // --listener says (WR-13).
-        loudness = try LevelRamp.probeLoudness(
-          setup: channelSetup, output: info.outputDevice, options: options)
+      // The output device is the same for every channel, so its loudness is decided at the first
+      // open, before the first sound (CR-02): headphones keep their -30 dBFS ceiling during the
+      // probe, whatever --listener says (WR-13). Each reopen reads the output again and must still
+      // see the route that loudness was decided with (WR-15): the backend's route watching starts
+      // over at every open, so a switch between two channels (speakers to headphones) would
+      // otherwise go unseen while the first channel's ceiling stays in force.
+      let loudness = try LevelRamp.probeLoudness(
+        setup: channelSetup, output: info.outputDevice, options: options)
+      let dataSource = info.outputDevice?.output?.dataSource
+      if let decided {
+        if dataSource != decided.dataSource || loudness != decided.loudness {
+          await backend.stop()
+          let sourceChanged = dataSource != decided.dataSource
+          throw SoundPingError.forDeviceEvent(
+            .outputRouteChanged(
+              uid: setup.output.uid, property: sourceChanged ? "dataSource" : "outputKind",
+              from: sourceChanged
+                ? decided.dataSource ?? "none" : decided.loudness.output.rawValue,
+              to: sourceChanged ? dataSource ?? "none" : loudness.output.rawValue))
+        }
+      } else {
+        decided = (loudness, dataSource)
       }
-      guard let probeCeiling = loudness?.ceilingDbfs else {
-        await backend.stop()
-        throw SoundPingError.internalFailure("noLoudness", "the probe has no ceiling")
-      }
+      let probeCeiling = loudness.ceilingDbfs
       do {
         if position == 0 {
           app = try await checks.checkPermission(on: backend).app
@@ -155,7 +169,7 @@ public struct ChannelProbe: Sendable {
       if !anythingHeard, !anyUnjudged {
         throw Preflight.silenceError(device: setup.input.name, channel: nil)
       }
-      guard let loudness else {
+      guard let loudness = decided?.loudness else {
         throw SoundPingError.internalFailure("noLoudness", "the probe has no ceiling")
       }
       throw Preflight.nothingHeardError(
