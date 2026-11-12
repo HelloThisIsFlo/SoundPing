@@ -25,11 +25,11 @@ findings:
     title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
   - id: WR-04
     severity: warning
-    disposition: skipped
+    disposition: fixed
     title: "Two-device runs record only the input device's buffer size"
   - id: WR-05
     severity: warning
-    disposition: skipped
+    disposition: fixed
     title: "A buffer size that settles at start always aborts the run, though the comment says the run adopts it"
   - id: WR-06
     severity: warning
@@ -41,7 +41,7 @@ findings:
     title: "The `.aborted` event covers only some failures, so the stream contract is inconsistent"
   - id: WR-08
     severity: warning
-    disposition: skipped
+    disposition: fixed
     title: "Bluetooth (and USB headset) outputs get the -18 dBFS \"unknown\" ceiling"
   - id: WR-09
     severity: warning
@@ -93,7 +93,7 @@ findings:
     title: "`HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it"
 open: 9
 total: 22
-recorded: 2026-11-12T16:27:26.644Z
+recorded: 2026-11-12T17:30:03.697Z
 ---
 
 # Phase 01: Code Review Disposition
@@ -105,11 +105,11 @@ recorded: 2026-11-12T16:27:26.644Z
 | WR-01 | warning | skipped | 01-REVIEW-FIX.md |
 | WR-02 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-03 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-04 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-05 | warning | skipped | 01-REVIEW-FIX.md |
+| WR-04 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-05 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-06 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-07 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-08 | warning | skipped | 01-REVIEW-FIX.md |
+| WR-08 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-09 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-10 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-11 | warning | fixed | 01-REVIEW-FIX.md |
