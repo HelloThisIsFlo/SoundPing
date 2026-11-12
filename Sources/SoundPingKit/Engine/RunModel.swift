@@ -228,6 +228,8 @@ public struct RunResult: Codable, Sendable, Equatable {
   /// What the HAL reports for the devices of this run, shown next to the measured figures and
   /// never applied to them (RES-02, ENG-06). Nil when a device's properties are unknown.
   public var reported: ReportedLatency?
+  /// The round-trip calibration this run produced, or `stored: false` when it failed the valid-hit gate (CAL-02).
+  public var calibration: CalibrationRef?
 
   public init(
     schemaVersion: Int = RunResult.currentSchemaVersion,
@@ -250,7 +252,8 @@ public struct RunResult: Codable, Sendable, Equatable {
     simulation: Scenario?,
     selfTest: ClockSelfTestResult? = nil,
     hostTimebase: HostTimebase? = nil,
-    reported: ReportedLatency? = nil
+    reported: ReportedLatency? = nil,
+    calibration: CalibrationRef? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.runId = runId
@@ -273,6 +276,7 @@ public struct RunResult: Codable, Sendable, Equatable {
     self.selfTest = selfTest
     self.hostTimebase = hostTimebase
     self.reported = reported
+    self.calibration = calibration
   }
 }
 
