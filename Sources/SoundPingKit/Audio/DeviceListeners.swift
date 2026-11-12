@@ -257,7 +257,8 @@ final class DeviceListeners: Sendable {
     ).flatMap(HALProperty.fourCharCode)
   }
 
-  private static func jackIsConnected(of id: AudioDeviceID) -> String? {
+  /// The output jack state as `outputRouteChanged` words it, nil when it cannot be read.
+  static func jackIsConnected(of id: AudioDeviceID) -> String? {
     HALProperty.get(
       id, kAudioDevicePropertyJackIsConnected, scope: kAudioObjectPropertyScopeOutput,
       initial: UInt32(0)

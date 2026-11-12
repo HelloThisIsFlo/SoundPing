@@ -206,7 +206,8 @@ public final class HALBackend: AudioBackend {
 
     let info = BackendInfo(
       sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
-      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo, warnings: warnings)
+      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo,
+      outputJack: DeviceListeners.jackIsConnected(of: outID), warnings: warnings)
 
     state.withLock {
       $0.rt = rt

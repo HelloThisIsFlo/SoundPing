@@ -103,8 +103,9 @@ public struct ChannelProbe: Sendable {
     // which channel is being probed.
     var unprobed = setup
     unprobed.inChannelName = nil
-    // The loudness decided at the first open, and the output data source it was decided with.
-    var decided: (loudness: LevelRamp.Loudness, dataSource: String?)?
+    // The loudness decided at the first open, and the output route (data source and jack state)
+    // it was decided with.
+    var decided: (loudness: LevelRamp.Loudness, dataSource: String?, jack: String?)?
     let nominal = try StimulusLibrary.template(id: templateId, sampleRate: 48_000)
     let checks = Preflight(resolver: resolver)
 
@@ -128,20 +129,28 @@ public struct ChannelProbe: Sendable {
       // otherwise go unseen while the first channel's ceiling stays in force.
       let loudness = try LevelRamp.runLoudness(
         setup: unprobed, output: info.outputDevice, input: info.inputDevice, options: options)
+      // The data source and the jack state are both carried, so a jack change alone (one whose
+      // data source does not move with it) ends the probe too.
       let dataSource = info.outputDevice?.output?.dataSource
+      let jack = info.outputJack
       if let decided {
-        if dataSource != decided.dataSource || loudness != decided.loudness {
+        var moved: (property: String, from: String?, to: String?)?
+        if dataSource != decided.dataSource {
+          moved = ("dataSource", decided.dataSource, dataSource)
+        } else if jack != decided.jack {
+          moved = ("jackIsConnected", decided.jack, jack)
+        } else if loudness != decided.loudness {
+          moved = ("outputKind", decided.loudness.output.rawValue, loudness.output.rawValue)
+        }
+        if let moved {
           await backend.stop()
-          let sourceChanged = dataSource != decided.dataSource
           throw SoundPingError.forDeviceEvent(
             .outputRouteChanged(
-              uid: setup.output.uid, property: sourceChanged ? "dataSource" : "outputKind",
-              from: sourceChanged
-                ? decided.dataSource ?? "none" : decided.loudness.output.rawValue,
-              to: sourceChanged ? dataSource ?? "none" : loudness.output.rawValue))
+              uid: setup.output.uid, property: moved.property, from: moved.from ?? "none",
+              to: moved.to ?? "none"))
         }
       } else {
-        decided = (loudness, dataSource)
+        decided = (loudness, dataSource, jack)
       }
       let probeCeiling = loudness.ceilingDbfs
       do {

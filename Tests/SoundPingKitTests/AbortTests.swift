@@ -90,17 +90,22 @@ private actor RouteChangeBackend: AudioBackend {
   }
 }
 
-/// Forwards to the simulator, but from the second `open` on reports the built-in output on its
-/// headphone data source: headphones plugged in between two channels of a probe, while no backend
-/// was watching (WR-15). Remembers what was scheduled after that switch.
+/// Forwards to the simulator, but from the second `open` on reports headphones plugged in between
+/// two channels of a probe, while no backend was watching (WR-15): the built-in output on its
+/// headphone data source, or only its jack connected (the data source unchanged). Remembers what
+/// was scheduled after that switch.
 private actor RouteBetweenOpensBackend: AudioBackend {
+  enum Switch: Sendable { case dataSource, jackOnly }
+
   private let inner: SimulatedBackend
+  private let switching: Switch
   private var opens = 0
   private(set) var scheduledAfterSwitch = 0
   nonisolated let events: AsyncStream<DeviceEvent>
 
-  init(scenario: Scenario) {
+  init(scenario: Scenario, switching: Switch = .dataSource) {
     inner = SimulatedBackend(scenario: scenario)
+    self.switching = switching
     events = inner.events
   }
 
@@ -109,7 +114,12 @@ private actor RouteBetweenOpensBackend: AudioBackend {
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
     var info = try await inner.open(setup, templates: templates)
     opens += 1
-    if opens > 1 { info.outputDevice?.output?.dataSource = "hdpn" }
+    switch switching {
+    case .dataSource:
+      if opens > 1 { info.outputDevice?.output?.dataSource = "hdpn" }
+    case .jackOnly:
+      info.outputJack = opens > 1 ? "connected" : "disconnected"
+    }
     return info
   }
   func start() async throws -> BackendInfo { try await inner.start() }
@@ -449,6 +459,35 @@ private actor RouteBetweenOpensBackend: AudioBackend {
     #expect(thrown?.context["property"] == "dataSource")
     #expect(thrown?.context["from"] == "ispk")
     #expect(thrown?.context["to"] == "hdpn")
+    #expect(await backend.openCount == 2, "the probe ends at the first reopen")
+    #expect(await backend.scheduledAfterSwitch == 0, "nothing is played after the switch")
+  }
+
+  @Test func aJackPluggedInBetweenTwoProbedChannelsEndsTheProbeEvenOnTheSameDataSource()
+    async throws
+  {
+    // Only the jack moves; the data source stays `ispk`. The jack state the probe started with is
+    // carried across reopens like the data source, so it must not keep probing into headphones.
+    let speakers = SimulatedCatalog.macSpeakers
+    let scarlett = SimulatedCatalog.scarlett
+    let setup = ResolvedSetup(
+      output: speakers.ref, input: scarlett.ref, outChannels: [1, 2], inChannel: 0,
+      autoInChannel: true)
+    let backend = RouteBetweenOpensBackend(
+      scenario: Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 7, seed: 3),
+      switching: .jackOnly)
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: backend, setup: setup, channels: Array((scarlett.input?.channels ?? []).prefix(3)))
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    #expect(thrown?.kind == .deviceChanged)
+    #expect(thrown?.code == "outputRouteChanged")
+    #expect(thrown?.context["property"] == "jackIsConnected")
+    #expect(thrown?.context["from"] == "disconnected")
+    #expect(thrown?.context["to"] == "connected")
     #expect(await backend.openCount == 2, "the probe ends at the first reopen")
     #expect(await backend.scheduledAfterSwitch == 0, "nothing is played after the switch")
   }

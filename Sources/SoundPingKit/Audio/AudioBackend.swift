@@ -98,6 +98,11 @@ public struct BackendInfo: Sendable, Equatable {
   /// result shows the reported sums next to the measured figures and applies nothing (RES-02).
   public var outputDevice: DeviceInfo?
   public var inputDevice: DeviceInfo?
+  /// The output's jack state when it was opened (`'jack'`), worded as `outputRouteChanged` words
+  /// it ("connected" or "disconnected"); nil when the output has no jack or it could not be read.
+  /// Its data source is `outputDevice.output.dataSource`. The channel probe compares both across
+  /// its reopens (WR-15).
+  public var outputJack: String?
   /// Things the backend could not set up that the person should know, for example device-change
   /// notifications the HAL refused. They end up in the run's preflight warnings.
   public var warnings: [String]
@@ -105,7 +110,7 @@ public struct BackendInfo: Sendable, Equatable {
   public init(
     sampleRate: Double, outputBufferFrames: Int, inputBufferFrames: Int,
     simulation: Scenario? = nil, hostClock: HostClock = .system, outputDevice: DeviceInfo? = nil,
-    inputDevice: DeviceInfo? = nil, warnings: [String] = []
+    inputDevice: DeviceInfo? = nil, outputJack: String? = nil, warnings: [String] = []
   ) {
     self.sampleRate = sampleRate
     self.outputBufferFrames = outputBufferFrames
@@ -114,6 +119,7 @@ public struct BackendInfo: Sendable, Equatable {
     self.hostClock = hostClock
     self.outputDevice = outputDevice
     self.inputDevice = inputDevice
+    self.outputJack = outputJack
     self.warnings = warnings
   }
 }
