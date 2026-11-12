@@ -129,7 +129,7 @@ private struct Session: Sendable {
       ? LevelRamp.templateId(for: listener) : request.parameters.templateId
     return PreflightPlan(
       permission: permission, listener: listener, ceilingDbfs: ceiling, templateId: templateId,
-      warnings: [])
+      warnings: info.warnings)
   }
 
   /// Measures while listening for device events; a device change aborts the run (ENG-07).

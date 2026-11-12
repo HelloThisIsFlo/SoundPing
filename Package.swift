@@ -10,13 +10,9 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2"),
-    .package(url: "https://github.com/apple/swift-log", exact: "1.17.0"),
   ],
   targets: [
-    .target(
-      name: "SoundPingKit",
-      dependencies: [.product(name: "Logging", package: "swift-log")]
-    ),
+    .target(name: "SoundPingKit"),
     .executableTarget(
       name: "soundping",
       dependencies: [

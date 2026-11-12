@@ -14,16 +14,6 @@ enum HALProperty {
     AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: element)
   }
 
-  static func has(
-    _ object: AudioObjectID,
-    _ selector: AudioObjectPropertySelector,
-    scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
-    element: AudioObjectPropertyElement = kAudioObjectPropertyElementMain
-  ) -> Bool {
-    var addr = address(selector, scope: scope, element: element)
-    return AudioObjectHasProperty(object, &addr)
-  }
-
   /// A fixed-size value, or nil when the object lacks the property or the read fails.
   static func get<T>(
     _ object: AudioObjectID,

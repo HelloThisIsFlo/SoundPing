@@ -63,11 +63,14 @@ public struct BackendInfo: Sendable, Equatable {
   /// result shows the reported sums next to the measured figures and applies nothing (RES-02).
   public var outputDevice: DeviceInfo?
   public var inputDevice: DeviceInfo?
+  /// Things the backend could not set up that the person should know, for example device-change
+  /// notifications the HAL refused. They end up in the run's preflight warnings.
+  public var warnings: [String]
 
   public init(
     sampleRate: Double, outputBufferFrames: Int, inputBufferFrames: Int,
     simulation: Scenario? = nil, hostClock: HostClock = .system, outputDevice: DeviceInfo? = nil,
-    inputDevice: DeviceInfo? = nil
+    inputDevice: DeviceInfo? = nil, warnings: [String] = []
   ) {
     self.sampleRate = sampleRate
     self.outputBufferFrames = outputBufferFrames
@@ -76,6 +79,7 @@ public struct BackendInfo: Sendable, Equatable {
     self.hostClock = hostClock
     self.outputDevice = outputDevice
     self.inputDevice = inputDevice
+    self.warnings = warnings
   }
 }
 

@@ -65,7 +65,7 @@ created: "2026-11-12"
 | T-01-32 | Safety (hearing) | bench runs on speakers/headphones | medium | mitigate | bench.sh uses soundping run (ramp + ceilings always on), never passes --level/--max-level | closed |
 | T-01-33 | Tampering | TCC reset and the Terminal.app prompt during the human checks | low | accept | Accepted risk (see log) | closed |
 | T-01-34 | Information disclosure | `runs show <id-or-path>` / RunStore.load | low | mitigate | RunStore resolves an id under runs/ only (unreadableRun otherwise); an absolute folder path holding run.json is read where it points, because the caller names it explicitly | closed |
-| T-01-SC | Tampering | SwiftPM installs | high | mitigate | Only apple/swift-argument-parser 1.8.2 + apple/swift-log 1.17.0, exact pins; no packages added after 01-01 | closed |
+| T-01-SC | Tampering | SwiftPM installs | high | mitigate | Only apple/swift-argument-parser 1.8.2, exact pin (apple/swift-log 1.17.0 was added in 01-01 and removed again because nothing imported it); no packages added after 01-01 | closed |
 
 *Status: open · closed · open — below high threshold (non-blocking)*
 *Severity: critical > high > medium > low — only open threats at or above workflow.security_block_on count toward threats_open*

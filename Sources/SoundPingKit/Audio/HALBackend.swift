@@ -166,9 +166,18 @@ public final class HALBackend: AudioBackend {
     }
     let listeners = DeviceListeners(watching: watched, rate: rate, rt: rt, sink: eventSink)
 
+    // A refused registration leaves the run working but blind to that kind of device change.
+    var warnings: [String] = []
+    let refused = listeners.refused.load(ordering: .relaxed)
+    if refused > 0 {
+      warnings.append(
+        "the HAL refused \(refused) device-change notification(s), so a device change during this run may not abort it"
+      )
+    }
+
     let info = BackendInfo(
       sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
-      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo)
+      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo, warnings: warnings)
 
     state.withLock {
       $0.rt = rt

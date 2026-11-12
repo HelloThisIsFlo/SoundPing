@@ -3,6 +3,40 @@ import Testing
 
 @testable import SoundPingKit
 
+/// Forwards to the simulator but reports a warning from `open`, as the HAL backend does when it
+/// could not register for some device notifications.
+private actor WarningBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private let warning: String
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario, warning: String) {
+    inner = SimulatedBackend(scenario: scenario)
+    self.warning = warning
+    events = inner.events
+  }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    var info = try await inner.open(setup, templates: templates)
+    info.warnings = [warning]
+    return info
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    try await inner.waitUntilCaptured(throughInputFrame: frame)
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    await inner.stamps(covering: range)
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async { await inner.stop() }
+}
+
 /// The checks before any sound plays (ENG-03): a denied microphone is silence on macOS, so the run
 /// must stop first and name the app that owns the permission.
 @Suite struct PreflightTests {
@@ -54,6 +88,30 @@ import Testing
       default: return false
       }
     }
+  }
+
+  // MARK: backend warnings
+
+  @Test func aWarningFromTheBackendReachesThePreflightReport() async throws {
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("soundping-test-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = RunStore(paths: try StorePaths.resolve(flag: folder.path, environment: [:]))
+    var parameters = RecipeRegistry.roundTrip.defaultParameters(seed: 3)
+    parameters.hits = 5
+    let request = RunRequest(
+      recipe: RecipeRegistry.roundTrip, parameters: parameters, setup: .simulatedDuplex)
+    let backend = WarningBackend(
+      scenario: Scenario(jitterFrames: 0, seed: 3), warning: "the HAL refused 2 notifications")
+
+    var result: RunResult?
+    for try await event in RunCoordinator(backend: backend, store: store, resolver: FakeResolver())
+      .run(request)
+    {
+      if case .finished(let finished) = event { result = finished }
+    }
+    let warnings = try #require(result?.preflight?.warnings)
+    #expect(warnings.contains("the HAL refused 2 notifications"))
   }
 
   // MARK: permission

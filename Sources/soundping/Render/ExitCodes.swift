@@ -1,4 +1,3 @@
-import ArgumentParser
 import SoundPingKit
 
 /// One exit code per failure class (D-03). An agent branches on these, never on prose.
@@ -27,9 +26,5 @@ enum ExitCodes {
     case .busy: return busy
     case .internalError: return internalError
     }
-  }
-
-  static func exitCode(for kind: SoundPingError.Kind) -> ExitCode {
-    ExitCode(code(for: kind))
   }
 }
