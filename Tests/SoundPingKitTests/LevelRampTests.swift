@@ -110,6 +110,34 @@ import Testing
         == .speaker)
   }
 
+  @Test func aBuiltInOutputIsASpeakerOnlyWhenItClearlyReportsItsSpeakers() {
+    // Fail safe (WR-12): a missing or unreadable data source picks the quieter ceiling.
+    var unreadable = Self.macSpeakers
+    unreadable.output?.dataSource = nil
+    let setup = Self.setup(output: unreadable, input: Self.macMicrophone)
+    #expect(LevelRamp.outputIsHeadphones(setup: setup, output: unreadable))
+    #expect(
+      LevelRamp.classify(setup: setup, output: unreadable, input: Self.macMicrophone)
+        == .headphones)
+
+    var other = Self.macSpeakers
+    other.output?.dataSource = "hdmi"
+    #expect(LevelRamp.outputIsHeadphones(setup: setup, output: other))
+
+    // No device info at all (catalog miss): the transport the setup recorded is all there is.
+    let recorded = ResolvedSetup(
+      output: Self.macSpeakers.ref, input: Self.macMicrophone.ref, outChannels: [1, 2],
+      inChannel: 1)
+    #expect(LevelRamp.classify(setup: recorded, output: nil, input: nil) == .headphones)
+
+    // The proven speakers keep the speaker ceiling.
+    let speakers = Self.macSpeakers
+    #expect(speakers.output?.dataSource == "ispk")
+    #expect(!LevelRamp.outputIsHeadphones(setup: setup, output: speakers))
+    #expect(
+      LevelRamp.classify(setup: setup, output: speakers, input: Self.macMicrophone) == .speaker)
+  }
+
   @Test func anythingElseIsUnknownBecauseAnInterfaceHeadphoneJackLooksLikeALineOut() {
     let setup = Self.setup(inChannelName: "Input 3", output: Self.scarlett, input: Self.scarlett)
     #expect(

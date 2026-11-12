@@ -84,8 +84,8 @@ public struct ChannelProbe: Sendable {
   }
 
   /// The listener whose ceiling the probe plays under: the `--listener` override's, else
-  /// headphones when the output device is treated as headphones (built-in headphone output or any
-  /// Bluetooth output, -30 dBFS), else unknown (-18 dBFS). The
+  /// headphones when the output device is treated as headphones (any Bluetooth output, or a built-in
+  /// output that is not clearly the speakers, -30 dBFS), else unknown (-18 dBFS). The
   /// channel is not known yet, so it cannot say whether it is a loopback, but whether the sound
   /// reaches a person's ears depends on the output device alone (T-01-28). A louder kind than the
   /// unknown one is never taken.

@@ -24,7 +24,7 @@ struct RunOptions: ParsableArguments {
   @Option(
     parsing: .unconditional,
     help:
-      "The loudest test sound allowed, in dBFS (0 or below). Replaces the listener's ceiling: loopback -6, speakers -12, headphones -30 (the built-in headphone output and any Bluetooth output), unknown -18 (USB and other interfaces). The only way to go louder than that, for example for a Bluetooth speaker."
+      "The loudest test sound allowed, in dBFS (0 or below). Replaces the listener's ceiling: loopback -6, speakers -12 (the built-in output, only when it reports its speakers), headphones -30 (any Bluetooth output, and a built-in output that does not clearly report its speakers), unknown -18 (USB and other interfaces). The only way to go louder than that, for example for a Bluetooth speaker."
   )
   var maxLevel: Double?
 

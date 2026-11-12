@@ -38,9 +38,9 @@ public struct LevelRamp: Sendable {
   ///
   /// | Listener | Ceiling | When |
   /// |---|---|---|
-  /// | headphones | -30 dBFS | the built-in output on its headphone data source, or any Bluetooth output |
+  /// | headphones | -30 dBFS | any Bluetooth output, or a built-in output that is not clearly the speakers |
   /// | loopback | -6 dBFS | the output feeds the input: one device with a `Loop` input channel or a virtual input, or a virtual output |
-  /// | speaker | -12 dBFS | the built-in output, on anything but its headphone data source |
+  /// | speaker | -12 dBFS | the built-in output, only when its data source is the speakers (`ispk`) |
   /// | unknown | -18 dBFS | everything else (USB and other interfaces) |
   ///
   /// The headphone check comes first: a virtual input or a `Loop` channel on another device
@@ -48,8 +48,10 @@ public struct LevelRamp: Sendable {
   /// someone's ears.
   ///
   /// A Bluetooth output is nearly always earbuds or headphones, so it gets the headphone ceiling. A
-  /// wrong guess costs a Bluetooth-speaker user one flag (`--max-level`); the opposite wrong guess
-  /// would put -18 dBFS clicks next to someone's ears. USB outputs stay unknown: there is no
+  /// built-in output is proven to be the speakers (`ispk`) before it gets the speaker ceiling;
+  /// a missing or unreadable data source counts as headphones, because the jack may be its own
+  /// device with no data source. A wrong guess costs a speaker user one flag (`--max-level`); the
+  /// opposite wrong guess would put -12 or -18 dBFS clicks next to someone's ears. USB outputs stay unknown: there is no
   /// reliable way to tell a headset from an interface, and an interface headphone jack looks like
   /// a line out. `--listener` and `--max-level` override all of it.
   public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
@@ -73,13 +75,15 @@ public struct LevelRamp: Sendable {
     return .unknown
   }
 
-  /// Whether the output device is treated as headphones: the built-in output on its headphone
-  /// data source, or any Bluetooth output (see `classify`). It depends on the output device alone,
-  /// whatever the input is.
+  /// Whether the output device is treated as headphones: any Bluetooth output, or a built-in
+  /// output unless it is clearly the speakers (see `classify`). Fail safe: prove "speaker" instead
+  /// of proving "headphones", so a missing data source picks the quieter ceiling. It depends on the
+  /// output device alone, whatever the input is.
   public static func outputIsHeadphones(setup: ResolvedSetup, output: DeviceInfo?) -> Bool {
     let outputTransport = output?.transport ?? setup.output.transport
     if outputTransport == "bluetooth" { return true }
-    return outputTransport == "builtIn" && output?.output?.dataSource == "hdpn"
+    guard outputTransport == "builtIn" else { return false }
+    return output?.output?.dataSource != "ispk"
   }
 
   public static func ceilingDbfs(for kind: ListenerKind) -> Double {
