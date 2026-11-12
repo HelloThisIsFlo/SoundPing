@@ -86,6 +86,9 @@ final class DeviceListeners: Sendable {
     var plays: Bool
     /// The output data source the run's loudness was decided with (`DeviceInfo.output.dataSource`).
     /// A data source that differs from it, even before the first notification, is a route change.
+    /// Nil when the loudness was not decided from a data source (none could be read, which on a
+    /// built-in output already means the -30 dBFS headphone ceiling): the data source read when the
+    /// listener registers is then the baseline.
     var outputDataSource: String? = nil
   }
 
@@ -202,7 +205,8 @@ final class DeviceListeners: Sendable {
   /// 'ssrc' and 'jack' on the output scope (WR-14), each only where the device implements it, so a
   /// device without a data source or a jack is not counted as a refused registration. The data
   /// source is compared with the one the loudness was decided with, and read once more after
-  /// registering, so a switch between the device read in `open` and now is not missed.
+  /// registering, so a switch between the device read in `open` and now is not missed. Without a
+  /// classified data source, the one read at registration is the baseline.
   private func watchOutputRoute(of device: Watched) {
     let id = device.id
     let uid = device.uid
@@ -210,7 +214,7 @@ final class DeviceListeners: Sendable {
     let scope = kAudioObjectPropertyScopeOutput
 
     if Self.implements(id, kAudioDevicePropertyDataSource, scope: scope) {
-      let classified = device.outputDataSource
+      let classified = device.outputDataSource ?? Self.outputDataSource(of: id)
       let check: @Sendable () -> Void = {
         let now = Self.outputDataSource(of: id)
         guard now != classified else { return }
