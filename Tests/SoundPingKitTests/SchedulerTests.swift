@@ -90,6 +90,21 @@ import Testing
     #expect(Self.spacingError(defaults, templateDurationMs: 50.5)?.code == "spacingTooShort")
   }
 
+  @Test func aValidHitFractionOutsideZeroToOneIsRefusedBeforeAnythingPlays() {
+    for fraction in [Double.nan, .infinity, -.infinity, 0, -0.5, 1.5] {
+      var parameters = Self.parameters()
+      parameters.minValidFraction = fraction
+      let error = Self.spacingError(parameters, templateDurationMs: 30)
+      #expect(error?.code == "invalidParameters", "fraction \(fraction) must be refused")
+      #expect(error?.context["parameter"] == "minValidFraction")
+    }
+    for fraction in [0.01, 0.5, 1.0] {
+      var parameters = Self.parameters()
+      parameters.minValidFraction = fraction
+      #expect(Self.spacingError(parameters, templateDurationMs: 30) == nil)
+    }
+  }
+
   @Test func aNonFiniteOrPositiveLevelIsRefused() {
     for level in [Double.nan, .infinity, -.infinity, 3] {
       var parameters = Self.parameters()

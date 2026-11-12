@@ -27,6 +27,18 @@ public enum HitScheduler {
           context: ["parameter": "level", "value": String(level)])
       }
     }
+    // The valid-hit gate: NaN or infinity would trap in requiredValidHits after the whole run was
+    // measured, zero or less would switch the gate off, and more than 1 could never be passed.
+    guard parameters.minValidFraction.isFinite, parameters.minValidFraction > 0,
+      parameters.minValidFraction <= 1
+    else {
+      throw SoundPingError.usage(
+        "invalidParameters",
+        "minValidFraction must be above 0 and at most 1, got \(parameters.minValidFraction)",
+        context: [
+          "parameter": "minValidFraction", "value": String(parameters.minValidFraction),
+        ])
+    }
     let timings = [parameters.spacingMinMs, parameters.spacingMaxMs, parameters.maxLatencyMs]
     guard timings.allSatisfy({ $0.isFinite && $0 > 0 }),
       parameters.spacingMaxMs >= parameters.spacingMinMs
