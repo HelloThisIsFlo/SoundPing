@@ -162,11 +162,42 @@ struct RunOptions: ParsableArguments {
       guard !name.trimmingCharacters(in: .whitespaces).isEmpty else {
         throw SoundPingError.usage("invalidSetupName", "--save-setup needs a non-empty name")
       }
-      var file = saved ?? SetupsFile()
-      file.setups[name] = SetupBinding(resolved: resolved)
-      try Setups.save(file, to: paths.setups)
+      // With `--in-channel auto` the channel is not known yet; the probe saves it once it is.
+      if !resolved.autoInChannel { try persistSetup(resolved, as: name) }
     }
     return resolved
+  }
+
+  private func storePaths() throws -> StorePaths {
+    try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment)
+  }
+
+  /// Writes the resolved devices and channels into setups.json under `name`.
+  func persistSetup(_ resolved: ResolvedSetup, as name: String) throws {
+    let paths = try storePaths()
+    var file = try Setups.load(from: paths.setups)
+    file.setups[name] = SetupBinding(resolved: resolved)
+    try Setups.save(file, to: paths.setups)
+  }
+
+  /// Changes only the input channel of a setup that already exists.
+  func updateSetupChannel(_ channel: Int, in name: String) throws {
+    let paths = try storePaths()
+    var file = try Setups.load(from: paths.setups)
+    guard var binding = file.setups[name] else {
+      throw SoundPingError.usage(
+        "unknownSetup", "no saved setup named '\(name)'", context: ["setup": name])
+    }
+    binding.inChannel = channel
+    file.setups[name] = binding
+    try Setups.save(file, to: paths.setups)
+  }
+
+  /// The input channels of the resolved input device, for `--in-channel auto` to probe.
+  func inputChannels(of setup: ResolvedSetup, simulated: Bool) throws -> [ChannelInfo] {
+    let catalog: any DeviceCatalog = simulated ? SimulatedCatalog() : HALDeviceCatalog()
+    let device = try catalog.listing().audio.first { $0.uid == setup.input.uid }
+    return device?.input?.channels ?? []
   }
 
   private func parsedOutChannels() throws -> [Int]? {

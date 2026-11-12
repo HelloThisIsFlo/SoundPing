@@ -6,7 +6,7 @@ public struct SetupSelectors: Sendable, Equatable {
   public var setup: String?
   public var output: String?
   public var input: String?
-  /// A 1-based channel number, or `auto` (not available until the level/auto-channel plan).
+  /// A 1-based channel number, or `auto` (probe the device for the channel that hears the chirp).
   public var inChannel: String?
   public var outChannels: [Int]?
   public var midiOut: String?
@@ -59,7 +59,7 @@ public struct SetupResolver: Sendable {
       .input, selector: selectors.input, stored: binding?.input, setup: selectors.setup,
       warnings: &warnings)
 
-    let inChannel = try pickInChannel(
+    let (inChannel, autoInChannel) = try pickInChannel(
       selectors.inChannel, stored: binding?.inChannel, scope: inputScope, device: inputDevice)
     let outChannels = try pickOutChannels(
       selectors.outChannels ?? binding?.outChannels, scope: outputScope, device: outputDevice)
@@ -79,11 +79,12 @@ public struct SetupResolver: Sendable {
       outChannels: outChannels,
       inChannel: inChannel,
       outChannelNames: outChannels.compactMap { name(of: $0, in: outputScope) },
-      inChannelName: name(of: inChannel, in: inputScope),
+      inChannelName: autoInChannel ? nil : name(of: inChannel, in: inputScope),
       requestedBufferFrames: nil,
       setupName: selectors.setup,
       midiOut: midiOut,
-      warnings: warnings)
+      warnings: warnings,
+      autoInChannel: autoInChannel)
   }
 
   // MARK: Setups
@@ -212,18 +213,15 @@ public struct SetupResolver: Sendable {
     scope.channels.map { "\($0.index) = \($0.name)" }.joined(separator: ", ")
   }
 
+  /// The 1-based input channel, or `(0, true)` for `auto`: the caller then probes the device for
+  /// the channel that hears the chirp (D-11). `auto` beats a channel stored in a saved setup.
   private func pickInChannel(
     _ raw: String?, stored: Int?, scope: ScopeInfo, device: DeviceInfo
-  ) throws -> Int {
+  ) throws -> (channel: Int, auto: Bool) {
     let channel: Int
     if let raw {
       let trimmed = raw.trimmingCharacters(in: .whitespaces)
-      if trimmed.lowercased() == "auto" {
-        throw SoundPingError.usage(
-          "inChannelAutoUnavailable",
-          "--in-channel auto is not available yet; pass a channel number: \(channelList(scope))",
-          context: ["device": device.uid])
-      }
+      if trimmed.lowercased() == "auto" { return (0, true) }
       guard let number = Int(trimmed) else {
         throw SoundPingError.usage(
           "invalidChannel",
@@ -248,7 +246,7 @@ public struct SetupResolver: Sendable {
         "input channel \(channel) does not exist on \(device.name); it has \(channelList(scope))",
         context: ["device": device.uid, "channel": String(channel)])
     }
-    return channel
+    return (channel, false)
   }
 
   private func pickOutChannels(

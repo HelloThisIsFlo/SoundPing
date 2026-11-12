@@ -95,6 +95,12 @@ struct SimulationOptions: ParsableArguments {
   @Flag(help: "The simulated output reports itself muted.")
   var simMuted = false
 
+  @Option(
+    help:
+      "The 1-based input channel the simulated stimulus comes back on; every other channel hears only noise. Without it every channel hears the stimulus."
+  )
+  var simLoopChannel: Int?
+
   func scenario(seed: UInt64, bufferFrames: Int = 128) throws -> Scenario {
     guard let permission = PermissionStatus(rawValue: simPermission),
       permission != .notDetermined
@@ -110,6 +116,6 @@ struct SimulationOptions: ParsableArguments {
       xrunHits: simXrun.values,
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
       faults: try simFault.map(Fault.parse), permission: permission, inputZeros: simInputZeros,
-      outputMuted: simMuted, seed: seed)
+      outputMuted: simMuted, loopChannel: simLoopChannel, seed: seed)
   }
 }

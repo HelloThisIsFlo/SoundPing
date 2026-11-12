@@ -201,6 +201,8 @@ public actor SimulatedBackend: AudioBackend {
   private var pendingEvents: [PendingEvent] = []
   private var outputUID = ""
   private var inputUID = ""
+  /// The 1-based input channel this open captures.
+  private var inChannel = 1
 
   private struct PendingEvent {
     var frame: Int64
@@ -244,6 +246,14 @@ public actor SimulatedBackend: AudioBackend {
       regenerated[template.id] = try template.atSampleRate(scenario.sampleRate)
     }
     self.templates = regenerated
+
+    // A device can be opened again for another input channel (the channel probe): nothing played
+    // before survives into the new open.
+    hits = []
+    xrunGaps = []
+    pendingEvents = []
+    started = false
+    inChannel = setup.inChannel
 
     twoDevices = setup.output.uid != setup.input.uid
     outputUID = setup.output.uid
@@ -415,7 +425,9 @@ public actor SimulatedBackend: AudioBackend {
 
     let pathGain = pow(10, scenario.pathGainDb / 20)
     let missed = Set(scenario.missedHits)
-    for hit in hits {
+    // Only the loop channel gets the stimulus back; the others hear their noise alone.
+    let hearsStimulus = scenario.loopChannel.map { $0 == inChannel } ?? true
+    for hit in hits where hearsStimulus {
       guard !missed.contains(hit.index), let template = templates[hit.templateId] else { continue }
       let start = arrivalFrame(of: hit)
       let end = start + template.durationMs / 1000 * stimulusFramesPerSecond

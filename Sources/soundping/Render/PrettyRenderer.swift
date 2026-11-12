@@ -30,6 +30,30 @@ struct PrettyRenderer {
       lock.listenerKind.rawValue, lock.ceilingDbfs)
   }
 
+  /// The ranked input channels of `--in-channel auto`, the winner marked, and how to keep it.
+  func channelProbeReport(_ result: ChannelProbeResult) -> String {
+    var lines = ["Input channels, best first"]
+    for score in result.channels {
+      let mark = score.index == result.chosen.index ? "→" : " "
+      lines.append(
+        String(
+          format: "%@ %3d  %@ conf %.2f  at %.0f dBFS", mark, score.index,
+          score.name.padded(to: 12), score.confidence, score.levelDbfs))
+    }
+    let chosen = result.chosen
+    lines.append("")
+    lines.append(
+      String(
+        format: "Chosen: channel %d (%@), confidence %.2f, margin %.2f over the runner-up",
+        chosen.index, chosen.name, chosen.confidence, chosen.margin))
+    if result.saved {
+      lines.append("Saved the channel in the setup.")
+    } else if let hint = result.saveHint {
+      lines.append(hint)
+    }
+    return lines.joined(separator: "\n")
+  }
+
   /// One line before the first hit: what is about to be measured.
   func armedLine(_ info: ArmedInfo) -> String {
     let setup = info.setup

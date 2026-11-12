@@ -273,8 +273,9 @@ import Testing
   }
 
   @Test func autoBeatsAChannelStoredInASavedSetup() throws {
-    let resolved = try hardwareResolver(setups: benchSetups()).resolve(
-      SetupSelectors(setup: "bench", inChannel: "auto"))
+    let resolved = try hardwareResolver(
+      midi: MIDIListing(destinations: [midiEndpoint(77, "Piano")]), setups: benchSetups()
+    ).resolve(SetupSelectors(setup: "bench", inChannel: "auto"))
     #expect(resolved.autoInChannel)
     #expect(resolved.inChannel == 0)
   }

@@ -48,6 +48,15 @@ struct SelftestCommand: AsyncParsableCommand {
         let recipe = try RecipeRegistry.recipe(id: "round-trip")
         let store = try options.makeStore()
         let (backend, setup) = try options.makeBackend(simulation: simulation)
+        guard !setup.autoInChannel else {
+          throw SoundPingError.usage(
+            "inChannelAutoNeedsRun",
+            "--in-channel auto only works with `soundping run`, which probes the channels and stops; the clock self-test needs a channel number",
+            context: [
+              "fix":
+                "run `soundping run round-trip … --in-channel auto` first, then pass the channel it found"
+            ])
+        }
         guard setup.output.uid == setup.input.uid else {
           throw SoundPingError.usage(
             "selfTestNeedsSameDevice",

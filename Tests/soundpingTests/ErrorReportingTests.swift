@@ -77,6 +77,21 @@ import Testing
     #expect(envelope["context"] == nil, "context is flattened, not nested")
   }
 
+  @Test func aNonAsciiAppNameReachesTheEnvelopeAsUTF8Unchanged() throws {
+    let name = "Ünïcödé 録音 🎛"
+    let app = ResponsibleApp(
+      name: name, bundleId: "dev.example.unicode", detectedVia: "processTree")
+    let error = try #require(Preflight.permissionError(status: .denied, app: app))
+    let line = try #require(ErrorReporting.report(for: error, jsonMode: true).stdout)
+
+    #expect(line.contains(name), "raw UTF-8 on the wire, no \\u escapes")
+    #expect(!line.contains("\\u"))
+    let envelope = try Self.object(line)
+    #expect(envelope["terminalApp"] as? String == name)
+    #expect(envelope["code"] as? String == "micPermissionDenied")
+    #expect(envelope["terminalAppBundleId"] as? String == "dev.example.unicode")
+  }
+
   @Test func envelopeKeysAreSorted() throws {
     let line = ErrorEnvelope.line(
       for: Self.error(.busy, context: ["terminalApp": "Ghostty", "alpha": "1"]))

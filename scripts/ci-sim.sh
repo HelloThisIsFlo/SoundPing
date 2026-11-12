@@ -255,4 +255,21 @@ expect_failure "clipping input" 65 inputClipping run round-trip --simulate --sim
 expect_failure "deaf path" 65 nothingHeardAtCeiling run round-trip --simulate --sim-gain-db -80 --store "$WORK/store-deaf"
 expect_failure "muted output" 65 outputMuted run round-trip --simulate --sim-muted --store "$WORK/store-muted"
 
+# --in-channel auto (D-11) is a probe: it finds the channel that hears the chirp, saves it into the
+# setup on request, and never writes a run or a hit.
+"$BIN" run round-trip --simulate --output scarlett --input scarlett --in-channel auto \
+  --sim-loop-channel 7 --save-setup bench --json --store "$WORK/store-auto" >"$WORK/auto.out"
+python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["type"] == "channelProbe" and d["schemaVersion"] == 1, d
+assert d["chosen"]["index"] == 7 and d["chosen"]["name"] == "Loop 1", d["chosen"]
+assert d["chosen"]["confidence"] >= 0.9 and d["chosen"]["margin"] >= 0.2, d["chosen"]
+assert d["saved"] is True and len(d["channels"]) == 10, d
+saved = json.load(open(sys.argv[2] + "/setups.json"))
+assert saved["setups"]["bench"]["inChannel"] == 7, saved
+' "$WORK/auto.out" "$WORK/store-auto"
+[ -z "$(ls -A "$WORK/store-auto/runs" 2>/dev/null)" ] || { echo "ci-sim: the channel probe left a run behind" >&2; exit 1; }
+expect_failure "ambiguous channels" 65 inChannelAmbiguous run round-trip --simulate --output scarlett --input scarlett --in-channel auto --store "$WORK/store-auto-ambiguous"
+
 echo "ci-sim: OK"
