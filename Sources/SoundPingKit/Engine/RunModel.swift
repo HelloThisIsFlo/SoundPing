@@ -171,10 +171,17 @@ public struct SetupSnapshot: Codable, Sendable, Equatable {
   public var midiOut: MIDIRef?
   public var warnings: [String]
   public var sampleRate: Double
-  public var bufferFrames: Int
+  /// SoundPing's own I/O buffer on the output device, as the run measured at (after the devices
+  /// settled). Equal to `inputBufferFrames` on one duplex device; two devices can differ.
+  public var outputBufferFrames: Int
+  /// SoundPing's own I/O buffer on the input device.
+  public var inputBufferFrames: Int
   public var simulated: Bool
 
-  public init(setup: ResolvedSetup, sampleRate: Double, bufferFrames: Int, simulated: Bool) {
+  public init(
+    setup: ResolvedSetup, sampleRate: Double, outputBufferFrames: Int, inputBufferFrames: Int,
+    simulated: Bool
+  ) {
     self.output = setup.output
     self.input = setup.input
     self.outChannels = setup.outChannels
@@ -186,8 +193,46 @@ public struct SetupSnapshot: Codable, Sendable, Equatable {
     self.midiOut = setup.midiOut
     self.warnings = setup.warnings
     self.sampleRate = sampleRate
-    self.bufferFrames = bufferFrames
+    self.outputBufferFrames = outputBufferFrames
+    self.inputBufferFrames = inputBufferFrames
     self.simulated = simulated
+  }
+
+  /// The buffer for one-line displays: "128" when both directions share a size, else
+  /// "256 out + 128 in".
+  public var bufferSummary: String {
+    outputBufferFrames == inputBufferFrames
+      ? "\(inputBufferFrames)" : "\(outputBufferFrames) out + \(inputBufferFrames) in"
+  }
+
+  /// A run.json written before the two buffers were recorded separately (schemaVersion 1) holds
+  /// one `bufferFrames`, the input device's size. It reads back as that size in both directions,
+  /// which is exact for the same-device runs of that time; the figure is only displayed, never
+  /// matched against anything.
+  private enum LegacyKeys: String, CodingKey { case bufferFrames }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    output = try c.decode(DeviceRef.self, forKey: .output)
+    input = try c.decode(DeviceRef.self, forKey: .input)
+    outChannels = try c.decode([Int].self, forKey: .outChannels)
+    inChannel = try c.decode(Int.self, forKey: .inChannel)
+    outChannelNames = try c.decode([String].self, forKey: .outChannelNames)
+    inChannelName = try c.decodeIfPresent(String.self, forKey: .inChannelName)
+    requestedBufferFrames = try c.decodeIfPresent(Int.self, forKey: .requestedBufferFrames)
+    setupName = try c.decodeIfPresent(String.self, forKey: .setupName)
+    midiOut = try c.decodeIfPresent(MIDIRef.self, forKey: .midiOut)
+    warnings = try c.decode([String].self, forKey: .warnings)
+    sampleRate = try c.decode(Double.self, forKey: .sampleRate)
+    simulated = try c.decode(Bool.self, forKey: .simulated)
+    if let inBuffer = try c.decodeIfPresent(Int.self, forKey: .inputBufferFrames) {
+      inputBufferFrames = inBuffer
+      outputBufferFrames = try c.decode(Int.self, forKey: .outputBufferFrames)
+    } else {
+      let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+      inputBufferFrames = try legacy.decode(Int.self, forKey: .bufferFrames)
+      outputBufferFrames = inputBufferFrames
+    }
   }
 }
 
@@ -202,7 +247,9 @@ public struct RecipeRef: Codable, Sendable, Equatable {
 }
 
 public struct RunResult: Codable, Sendable, Equatable {
-  public static let currentSchemaVersion = 1
+  /// 2: `setup` carries `outputBufferFrames` and `inputBufferFrames` (and the calibration key
+  /// the same pair) where schema 1 had one `bufferFrames`. A schema 1 run.json still decodes.
+  public static let currentSchemaVersion = 2
 
   public var schemaVersion: Int
   public var runId: String

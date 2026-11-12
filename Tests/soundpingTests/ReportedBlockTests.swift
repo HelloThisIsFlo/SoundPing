@@ -38,7 +38,9 @@ import Testing
       label: nil,
       tags: [],
       parameters: RunParameters(hits: 10, seed: 7),
-      setup: SetupSnapshot(setup: setup, sampleRate: 48_000, bufferFrames: 128, simulated: true),
+      setup: SetupSnapshot(
+        setup: setup, sampleRate: 48_000, outputBufferFrames: 128, inputBufferFrames: 128,
+        simulated: true),
       measured: figures,
       histogram: nil,
       hits: [],
@@ -49,7 +51,8 @@ import Testing
       reported: withReported
         ? ReportedLatency.compute(
           output: output, outChannels: setup.outChannels, input: input,
-          inChannel: setup.inChannel, bufferFrames: 128, sampleRate: 48_000) : nil)
+          inChannel: setup.inChannel, outputBufferFrames: 128, inputBufferFrames: 128,
+          sampleRate: 48_000) : nil)
   }
 
   private static var scarlett: ResolvedSetup {
@@ -124,5 +127,22 @@ import Testing
       Self.result(domain: .host, setup: Self.speakersToMic, withReported: false))
     #expect(!text.contains("Reported vs measured"))
     #expect(!text.contains("Round trip at buffer"), "a breakdown is defined for one device only")
+  }
+
+  @Test func theArmedLineNamesBothBuffersOnlyWhenTheyDiffer() {
+    func line(output: Int, input: Int) -> String {
+      let snapshot = SetupSnapshot(
+        setup: Self.speakersToMic, sampleRate: 48_000, outputBufferFrames: output,
+        inputBufferFrames: input, simulated: false)
+      return renderer.armedLine(
+        ArmedInfo(
+          runId: "r", recipe: RecipeRegistry.roundTrip.ref,
+          parameters: RunParameters(hits: 10, seed: 7), setup: snapshot))
+    }
+    #expect(
+      line(output: 512, input: 512).contains("buffer 512)"), "\(line(output: 512, input: 512))")
+    #expect(
+      line(output: 512, input: 128).contains("buffer 512 out + 128 in)"),
+      "\(line(output: 512, input: 128))")
   }
 }

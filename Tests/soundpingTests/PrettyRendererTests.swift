@@ -58,7 +58,8 @@ import Testing
       tags: [],
       parameters: RunParameters(hits: measure.count, seed: 7),
       setup: SetupSnapshot(
-        setup: .simulatedDuplex, sampleRate: sampleRate, bufferFrames: 128, simulated: true),
+        setup: .simulatedDuplex, sampleRate: sampleRate, outputBufferFrames: 128,
+        inputBufferFrames: 128, simulated: true),
       measured: Measured(
         headline: .path, domain: .sample,
         path: Stats.summarize(latencies: latencies, n: measure.count, sampleRate: sampleRate)),

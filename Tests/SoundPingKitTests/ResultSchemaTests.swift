@@ -18,7 +18,8 @@ import Testing
       tags: tags,
       parameters: RecipeRegistry.roundTrip.defaultParameters(seed: 1),
       setup: SetupSnapshot(
-        setup: .simulatedDuplex, sampleRate: 48_000, bufferFrames: 128, simulated: true),
+        setup: .simulatedDuplex, sampleRate: 48_000, outputBufferFrames: 128,
+        inputBufferFrames: 128, simulated: true),
       measured: Measured(
         headline: .path, domain: .sample,
         path: SummaryStats(
@@ -92,7 +93,7 @@ import Testing
 
   @Test func schemaVersionAndTimestamp() throws {
     let object = try Self.object(of: Self.result())
-    #expect(object["schemaVersion"] as? Int == 1)
+    #expect(object["schemaVersion"] as? Int == 2)
     let createdAt = try #require(object["createdAt"] as? String)
     #expect(createdAt.hasSuffix("Z"))
     #expect(createdAt == "2023-11-14T22:13:20Z")

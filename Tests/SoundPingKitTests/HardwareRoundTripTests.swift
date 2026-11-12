@@ -74,7 +74,9 @@ struct HardwareRoundTripTests {
       #expect(
         result.selfTest != nil, "pass \(pass): a same-device run must carry a clock self-test")
       // SoundPing's own buffer, as applied, not as requested.
-      #expect(result.setup.bufferFrames == 128, "pass \(pass): buffer \(result.setup.bufferFrames)")
+      #expect(
+        result.setup.outputBufferFrames == 128 && result.setup.inputBufferFrames == 128,
+        "pass \(pass): buffer \(result.setup.bufferSummary)")
       #expect(result.simulation == nil)
     }
     #expect(

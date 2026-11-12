@@ -175,8 +175,8 @@ public final class HALBackend: AudioBackend {
     }
 
     return BackendInfo(
-      sampleRate: rate, bufferFrames: inBuffer, hostClock: .system, outputDevice: outInfo,
-      inputDevice: inInfo)
+      sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
+      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo)
   }
 
   /// A check before the run failed (exit 65).

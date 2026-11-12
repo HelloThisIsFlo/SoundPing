@@ -111,7 +111,7 @@ import Testing
     let reported = try #require(result.reported)
     let expected = ReportedLatency.compute(
       output: SimulatedCatalog.scarlett, outChannels: [1, 2], input: SimulatedCatalog.scarlett,
-      inChannel: 1, bufferFrames: 128, sampleRate: 48_000)
+      inChannel: 1, outputBufferFrames: 128, inputBufferFrames: 128, sampleRate: 48_000)
     #expect(reported == expected)
     #expect(reported.pathFrames == 57)
     #expect(reported.appRoundTripFrames == 341)

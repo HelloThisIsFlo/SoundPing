@@ -63,7 +63,7 @@ struct PrettyRenderer {
     let simulated = setup.simulated ? ", simulated" : ""
     let hits = "\(info.parameters.hits) hits after \(info.parameters.warmup) warm-ups"
     return
-      "\(info.recipe.id): \(route) (\(Int(setup.sampleRate)) Hz, buffer \(setup.bufferFrames)\(simulated)), \(hits)"
+      "\(info.recipe.id): \(route) (\(Int(setup.sampleRate)) Hz, buffer \(setup.bufferSummary)\(simulated)), \(hits)"
   }
 
   /// One hit as it lands. A rejected hit shows its reason in place of the numbers.
@@ -188,7 +188,7 @@ struct PrettyRenderer {
     }
 
     return [
-      "Round trip at buffer \(result.setup.bufferFrames), \(Int(rate)) Hz",
+      "Round trip at buffer \(result.setup.bufferSummary), \(Int(rate)) Hz",
       row("hardware path", path, "measured" + (reported.map { macOSReports($0.pathFrames) } ?? "")),
       row("SoundPing buffer", buffer, bufferNote),
       row(

@@ -182,7 +182,8 @@ import Testing
       tags: [],
       parameters: RunParameters(hits: hits, seed: 7),
       setup: SetupSnapshot(
-        setup: .simulatedDuplex, sampleRate: 48_000, bufferFrames: 128, simulated: true),
+        setup: .simulatedDuplex, sampleRate: 48_000, outputBufferFrames: 128,
+        inputBufferFrames: 128, simulated: true),
       measured: Measured(headline: .path, domain: .sample, path: stats),
       histogram: nil,
       hits: [],

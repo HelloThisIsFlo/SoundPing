@@ -8,7 +8,7 @@ import Testing
 @Suite struct CalibrationStoreTests {
   private static let key = CalibrationKey(
     outputUID: "out-uid", outChannels: [1, 2], inputUID: "in-uid", inChannel: 7,
-    sampleRate: 48_000, bufferFrames: 128)
+    sampleRate: 48_000, outputBufferFrames: 128, inputBufferFrames: 128)
 
   private static func record(
     key: CalibrationKey = key, runId: String = "run-1", valueFrames: Double = 696.37
@@ -57,7 +57,7 @@ import Testing
       key
         == CalibrationKey(
           outputUID: "out-uid", outChannels: [1, 2], inputUID: "in-uid", inChannel: 7,
-          sampleRate: 48_000, bufferFrames: 128))
+          sampleRate: 48_000, outputBufferFrames: 128, inputBufferFrames: 128))
 
     var different: [(String, CalibrationKey)] = []
     var changed = key
@@ -82,8 +82,17 @@ import Testing
     changed.sampleRate = 48_000.000_001
     different.append(("sampleRate off by a millionth", changed))
     changed = key
-    changed.bufferFrames = 129
-    different.append(("bufferFrames 128 -> 129", changed))
+    changed.outputBufferFrames = 129
+    different.append(("outputBufferFrames 128 -> 129", changed))
+    changed = key
+    changed.inputBufferFrames = 129
+    different.append(("inputBufferFrames 128 -> 129", changed))
+    changed = key
+    changed.outputBufferFrames = 256
+    different.append(("256 out + 128 in", changed))
+    changed = key
+    changed.inputBufferFrames = 256
+    different.append(("128 out + 256 in", changed))
 
     for (field, other) in different {
       #expect(other != key, "\(field) makes a different key")
@@ -103,7 +112,7 @@ import Testing
     try CalibrationStore.record(written, in: url)
 
     let file = try CalibrationStore.load(from: url)
-    #expect(file.schemaVersion == 1)
+    #expect(file.schemaVersion == 2)
     #expect(file.calibrations == [written])
     #expect(file.calibrations.first?.key.sampleRate == 44_099.999_999_9, "an exact Double")
     #expect(try CalibrationStore.calibration(for: key, in: url) == written)
@@ -113,7 +122,7 @@ import Testing
     let url = Self.tempFile()
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     var other = Self.key
-    other.bufferFrames = 256
+    other.inputBufferFrames = 256
     try CalibrationStore.record(Self.record(runId: "first"), in: url)
     try CalibrationStore.record(Self.record(key: other, runId: "other-buffer"), in: url)
     try CalibrationStore.record(Self.record(runId: "second", valueFrames: 700), in: url)
@@ -132,7 +141,7 @@ import Testing
   }
 
   @Test(arguments: [
-    "not json", #"{"schemaVersion": 2, "calibrations": []}"#, #"{"schemaVersion": 1}"#,
+    "not json", #"{"schemaVersion": 3, "calibrations": []}"#, #"{"schemaVersion": 1}"#,
   ])
   func anotherSchemaVersionOrMalformedJSONIsAUsageErrorNamingThePath(body: String) throws {
     let url = Self.tempFile()
@@ -156,6 +165,76 @@ import Testing
       #expect(error.code == "calibrationsUnreadable")
     }
     #expect(try Data(contentsOf: url) == Data(body.utf8), "the unreadable file is left alone")
+  }
+
+  // MARK: files written before the two buffers were keyed separately
+
+  /// A schema 1 calibrations.json: one `bufferFrames` in the key.
+  private static let legacyFile = """
+    {
+      "schemaVersion": 1,
+      "calibrations": [
+        {
+          "key": {"outputUID": "out-uid", "outChannels": [1, 2], "inputUID": "in-uid",
+                  "inChannel": 7, "sampleRate": 48000, "bufferFrames": 128},
+          "kind": "roundTrip", "label": "round trip", "headline": "appRoundTrip",
+          "valueFrames": 696.37, "valueMs": 14.5, "pathFrames": 412.37,
+          "appRoundTripFrames": 696.37, "jitterFrames": 1.25, "valid": 98, "n": 100,
+          "domain": "sample", "runId": "old-run", "measuredAt": "2023-11-14T22:13:20Z"
+        }
+      ]
+    }
+    """
+
+  @Test func aSchemaOneFileStillLoadsButItsKeysNeverMatchANewRun() throws {
+    let url = Self.tempFile()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(Self.legacyFile.utf8).write(to: url)
+
+    let file = try CalibrationStore.load(from: url)
+    let old = try #require(file.calibrations.first)
+    #expect(old.runId == "old-run")
+    #expect(old.key.inputBufferFrames == 128)
+    #expect(old.key.outputBufferFrames == 0, "the old key never knew the output's buffer")
+    // The setup the old record was made on, buffer 128 on both sides, finds no calibration.
+    #expect(old.key != Self.key)
+    #expect(try CalibrationStore.calibration(for: Self.key, in: url) == nil)
+  }
+
+  @Test func recordingIntoASchemaOneFileKeepsTheOldRecordAndMovesTheFileToSchemaTwo() throws {
+    let url = Self.tempFile()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(Self.legacyFile.utf8).write(to: url)
+
+    try CalibrationStore.record(Self.record(runId: "new-run"), in: url)
+
+    let file = try CalibrationStore.load(from: url)
+    #expect(file.schemaVersion == 2)
+    #expect(file.calibrations.count == 2)
+    #expect(file.calibrations.first?.runId == "old-run")
+    #expect(try CalibrationStore.calibration(for: Self.key, in: url)?.runId == "new-run")
+    // And the rewritten file is a plain schema 2 file: the old key keeps its "unknown" output.
+    let again = try CalibrationStore.load(from: url)
+    #expect(again == file)
+  }
+
+  @Test func aSchemaOneRunJSONSetupReadsBackWithItsBufferInBothDirections() throws {
+    let current = SetupSnapshot(
+      setup: .simulatedDuplex, sampleRate: 48_000, outputBufferFrames: 256, inputBufferFrames: 256,
+      simulated: true)
+    var object = try #require(
+      try JSONSerialization.jsonObject(with: RunJSON.fileEncoder().encode(current))
+        as? [String: Any])
+    object["outputBufferFrames"] = nil
+    object["inputBufferFrames"] = nil
+    object["bufferFrames"] = 256
+    let legacy = try RunJSON.decoder().decode(
+      SetupSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(legacy == current)
   }
 
   // MARK: through a run
@@ -197,7 +276,8 @@ import Testing
 
     let key = CalibrationKey(
       outputUID: SimulatedCatalog.scarlettUID, outChannels: [1, 2],
-      inputUID: SimulatedCatalog.scarlettUID, inChannel: 7, sampleRate: 48_000, bufferFrames: 128)
+      inputUID: SimulatedCatalog.scarlettUID, inChannel: 7, sampleRate: 48_000,
+      outputBufferFrames: 128, inputBufferFrames: 128)
     #expect(result.calibration == CalibrationRef(key: key, stored: true))
     #expect(result.calibration?.label == "round trip")
 
@@ -303,5 +383,27 @@ import Testing
       #expect(error.detail.contains(store.paths.calibrations.path))
     }
     #expect(try FileManager.default.contentsOfDirectory(atPath: store.paths.runs.path).isEmpty)
+  }
+
+  @Test func aTwoDeviceRunKeysAndRecordsBothBuffers() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    let setup = ResolvedSetup(
+      output: SimulatedCatalog.macSpeakers.ref, input: SimulatedCatalog.macMicrophone.ref,
+      outChannels: [1, 2], inChannel: 1)
+    let result = try await Self.run(
+      Scenario(
+        latencyFrames: 2_203, jitterFrames: 0, bufferFrames: 128, outputBufferFrames: 512,
+        seed: 4),
+      setup: setup, store: store)
+
+    #expect(result.setup.outputBufferFrames == 512)
+    #expect(result.setup.inputBufferFrames == 128)
+    #expect(result.setup.bufferSummary == "512 out + 128 in")
+    let key = try #require(result.calibration?.key)
+    #expect(key.outputBufferFrames == 512 && key.inputBufferFrames == 128)
+    let reported = try #require(result.reported)
+    #expect(reported.output.bufferFrames == 512 && reported.input.bufferFrames == 128)
+    #expect(reported.expectedIoOffsetFrames == 512 + 128 + 48 + 36)
   }
 }

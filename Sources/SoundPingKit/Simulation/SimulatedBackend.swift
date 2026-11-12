@@ -75,7 +75,13 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// so a large value clips.
   public var pathGainDb: Double
   public var sampleRate: Double
+  /// The buffer of the input device, and of the output device unless `outputBufferFrames` says
+  /// otherwise. It also sets the granularity at which virtual time advances.
   public var bufferFrames: Int
+  /// The output device's buffer when it differs from `bufferFrames`, as two devices that clamp the
+  /// requested size to different ranges end up with. Only a two-device run uses it; one duplex
+  /// device has one buffer. Nil means the same as `bufferFrames`.
+  public var outputBufferFrames: Int?
   /// Global hit indices (the numbering of `HitRecord.index`, warm-ups first) that never arrive:
   /// the stimulus is not rendered, the capture holds only noise.
   public var missedHits: [Int]
@@ -112,6 +118,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     pathGainDb: Double = 0,
     sampleRate: Double = 48_000,
     bufferFrames: Int = 128,
+    outputBufferFrames: Int? = nil,
     missedHits: [Int] = [],
     xrunHits: [Int] = [],
     driftPPM: Double = 0,
@@ -130,6 +137,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.pathGainDb = pathGainDb
     self.sampleRate = sampleRate
     self.bufferFrames = bufferFrames
+    self.outputBufferFrames = outputBufferFrames
     self.missedHits = missedHits
     self.xrunHits = xrunHits
     self.driftPPM = driftPPM
@@ -152,6 +160,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     pathGainDb = try c.decode(Double.self, forKey: .pathGainDb)
     sampleRate = try c.decode(Double.self, forKey: .sampleRate)
     bufferFrames = try c.decode(Int.self, forKey: .bufferFrames)
+    outputBufferFrames = try c.decodeIfPresent(Int.self, forKey: .outputBufferFrames)
     missedHits = try c.decodeIfPresent([Int].self, forKey: .missedHits) ?? []
     xrunHits = try c.decodeIfPresent([Int].self, forKey: .xrunHits) ?? []
     driftPPM = try c.decodeIfPresent(Double.self, forKey: .driftPPM) ?? 0
@@ -264,9 +273,11 @@ public actor SimulatedBackend: AudioBackend {
 
     // The fixtures stand in for what the HAL would report; a device they do not know reports nothing.
     let catalog = (try? SimulatedCatalog().listing().audio) ?? []
+    let outputBuffer =
+      twoDevices ? scenario.outputBufferFrames ?? scenario.bufferFrames : scenario.bufferFrames
     return BackendInfo(
-      sampleRate: scenario.sampleRate, bufferFrames: scenario.bufferFrames, simulation: scenario,
-      hostClock: Self.hostClock,
+      sampleRate: scenario.sampleRate, outputBufferFrames: outputBuffer,
+      inputBufferFrames: scenario.bufferFrames, simulation: scenario, hostClock: Self.hostClock,
       outputDevice: catalog.first { $0.uid == setup.output.uid },
       inputDevice: catalog.first { $0.uid == setup.input.uid })
   }

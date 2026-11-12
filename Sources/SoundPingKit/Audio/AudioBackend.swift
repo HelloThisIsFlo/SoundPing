@@ -48,7 +48,12 @@ public enum DeviceEvent: Sendable, Equatable {
 
 public struct BackendInfo: Sendable, Equatable {
   public var sampleRate: Double
-  public var bufferFrames: Int
+  /// SoundPing's own I/O buffer on the output device, in frames. Each device clamps the requested
+  /// size to its own range, so a two-device run can end up with two different sizes (a single
+  /// duplex device has one, and both fields hold it).
+  public var outputBufferFrames: Int
+  /// SoundPing's own I/O buffer on the input device, in frames.
+  public var inputBufferFrames: Int
   /// Non-nil only for the simulated backend; recorded in run.json.
   public var simulation: Scenario?
   /// The timebase the callback host times are in. The simulator fixes it to Apple Silicon's 125/3
@@ -60,11 +65,13 @@ public struct BackendInfo: Sendable, Equatable {
   public var inputDevice: DeviceInfo?
 
   public init(
-    sampleRate: Double, bufferFrames: Int, simulation: Scenario? = nil,
-    hostClock: HostClock = .system, outputDevice: DeviceInfo? = nil, inputDevice: DeviceInfo? = nil
+    sampleRate: Double, outputBufferFrames: Int, inputBufferFrames: Int,
+    simulation: Scenario? = nil, hostClock: HostClock = .system, outputDevice: DeviceInfo? = nil,
+    inputDevice: DeviceInfo? = nil
   ) {
     self.sampleRate = sampleRate
-    self.bufferFrames = bufferFrames
+    self.outputBufferFrames = outputBufferFrames
+    self.inputBufferFrames = inputBufferFrames
     self.simulation = simulation
     self.hostClock = hostClock
     self.outputDevice = outputDevice

@@ -7,7 +7,8 @@ public struct RunListing: Codable, Sendable, Equatable {
   public var recipe: String
   public var label: String?
   public var tags: [String]
-  /// SoundPing's own I/O buffer in frames when the run happened.
+  /// SoundPing's own I/O buffer on the input device in frames when the run happened. A two-device
+  /// run can have a different output buffer; its run.json has both.
   public var bufferFrames: Int
   /// SoundPing's buffer part in milliseconds (both buffers plus both safety offsets); nil for a
   /// two-device run, where it is not defined.
@@ -175,7 +176,7 @@ public struct RunStore: Sendable {
       rows.append(
         RunListing(
           runId: folder.lastPathComponent, createdAt: result.createdAt, recipe: result.recipe.id,
-          label: result.label, tags: result.tags, bufferFrames: result.setup.bufferFrames,
+          label: result.label, tags: result.tags, bufferFrames: result.setup.inputBufferFrames,
           bufferMs: measured.ioOffset?.median?.ms, pathMs: stats?.median?.ms,
           totalMs: measured.appRoundTrip?.median?.ms, valid: stats?.valid ?? 0, n: stats?.n ?? 0,
           runPath: folder.path))

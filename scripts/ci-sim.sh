@@ -23,7 +23,9 @@ trap cleanup EXIT
 RUN_PATH="$(python3 -c '
 import json, os, sys
 r = json.load(open(sys.argv[1]))
-assert r["schemaVersion"] == 1, r["schemaVersion"]
+assert r["schemaVersion"] == 2, r["schemaVersion"]
+assert r["setup"]["outputBufferFrames"] == 128 and r["setup"]["inputBufferFrames"] == 128, r["setup"]
+assert "bufferFrames" not in r["setup"], r["setup"]
 assert r["recipe"]["id"] == "round-trip", r["recipe"]
 path = r["measured"]["path"]
 assert abs(path["median"]["frames"] - 412.37) <= 0.1, path["median"]
@@ -47,10 +49,11 @@ cmp "$OUT" "$RUN_PATH/run.json"
 python3 -c '
 import json, sys
 file = json.load(open(sys.argv[1] + "/calibrations.json"))
-assert file["schemaVersion"] == 1 and len(file["calibrations"]) == 1, file
+assert file["schemaVersion"] == 2 and len(file["calibrations"]) == 1, file
 record = file["calibrations"][0]
 assert record["kind"] == "roundTrip" and record["label"] == "round trip", record
-assert record["key"]["sampleRate"] == 48000 and record["key"]["bufferFrames"] == 128, record["key"]
+key = record["key"]
+assert key["sampleRate"] == 48000 and key["outputBufferFrames"] == 128 and key["inputBufferFrames"] == 128, key
 ' "$STORE"
 
 # --ndjson (D-03): every stdout line is one JSON event. The stream opens with the level probes,

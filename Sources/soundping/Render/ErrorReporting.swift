@@ -18,13 +18,15 @@ struct FailedAfterResult: Error {
 
 enum ErrorEnvelope {
   private static let reserved: Set<String> = ["schemaVersion", "type", "kind", "code", "detail"]
+  /// The version of this envelope's own shape, which has not changed; it is not the run.json one.
+  static let schemaVersion = 1
 
   /// The single JSON line an agent reads on stdout in --json and --ndjson modes:
   /// `schemaVersion`, `type: "error"`, `kind`, `code`, `detail`, then every context key at the
   /// top level. Keys are sorted. A context key can never overwrite one of the five fixed fields.
   static func line(for error: SoundPingError) -> String {
     var object: [String: Any] = error.context.filter { !reserved.contains($0.key) }
-    object["schemaVersion"] = RunResult.currentSchemaVersion
+    object["schemaVersion"] = schemaVersion
     object["type"] = "error"
     object["kind"] = error.kind.rawValue
     object["code"] = error.code
@@ -34,7 +36,7 @@ enum ErrorEnvelope {
         withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
     else {
       return
-        #"{"code":"\#(error.code)","kind":"\#(error.kind.rawValue)","schemaVersion":1,"type":"error"}"#
+        #"{"code":"\#(error.code)","kind":"\#(error.kind.rawValue)","schemaVersion":\#(schemaVersion),"type":"error"}"#
     }
     return String(decoding: data, as: UTF8.self)
   }

@@ -27,7 +27,8 @@ import Testing
       tags: tags,
       parameters: RecipeRegistry.roundTrip.defaultParameters(seed: 1),
       setup: SetupSnapshot(
-        setup: .simulatedDuplex, sampleRate: 48_000, bufferFrames: 128, simulated: true),
+        setup: .simulatedDuplex, sampleRate: 48_000, outputBufferFrames: 128,
+        inputBufferFrames: 128, simulated: true),
       measured: Measured(
         headline: .path, domain: .sample,
         path: SummaryStats(n: 10, valid: 10, median: StatValue(frames: 100, ms: 2.08))),

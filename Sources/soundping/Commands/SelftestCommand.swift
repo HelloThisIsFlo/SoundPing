@@ -98,7 +98,7 @@ struct SelftestCommand: AsyncParsableCommand {
 
         let key = ClockSelfTestKey(
           deviceUID: setup.output.uid, sampleRate: result.setup.sampleRate,
-          bufferFrames: result.setup.bufferFrames)
+          bufferFrames: result.setup.inputBufferFrames)
         if !output.isDataMode {
           Output.writeLine("")
           Output.writeLine(pretty.selfTestLine(selfTest))

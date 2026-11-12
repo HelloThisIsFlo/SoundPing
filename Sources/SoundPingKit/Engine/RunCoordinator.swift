@@ -227,8 +227,8 @@ private struct Session: Sendable {
 
     let runId = folder.lastPathComponent
     let snapshot = SetupSnapshot(
-      setup: request.setup, sampleRate: sampleRate, bufferFrames: info.bufferFrames,
-      simulated: info.simulation != nil)
+      setup: request.setup, sampleRate: sampleRate, outputBufferFrames: info.outputBufferFrames,
+      inputBufferFrames: info.inputBufferFrames, simulated: info.simulation != nil)
 
     try await backend.start()
     var listener = HitListener(
@@ -414,8 +414,8 @@ private struct Session: Sendable {
     if let outputDevice = info.outputDevice, let inputDevice = info.inputDevice {
       reported = ReportedLatency.compute(
         output: outputDevice, outChannels: request.setup.outChannels, input: inputDevice,
-        inChannel: request.setup.inChannel, bufferFrames: info.bufferFrames,
-        sampleRate: info.sampleRate)
+        inChannel: request.setup.inChannel, outputBufferFrames: info.outputBufferFrames,
+        inputBufferFrames: info.inputBufferFrames, sampleRate: info.sampleRate)
     }
 
     var result = RunResult(
@@ -454,7 +454,7 @@ private struct Session: Sendable {
     if let selfTest {
       let key = ClockSelfTestKey(
         deviceUID: request.setup.output.uid, sampleRate: info.sampleRate,
-        bufferFrames: info.bufferFrames)
+        bufferFrames: info.inputBufferFrames)
       try ClockSelfTestStore.record(
         ClockSelfTestEntry(key: key, result: selfTest, runId: runId, measuredAt: createdAt),
         in: store.paths.clockSelfTest)
@@ -472,7 +472,8 @@ private struct Session: Sendable {
     let setup = request.setup
     let key = CalibrationKey(
       outputUID: setup.output.uid, outChannels: setup.outChannels, inputUID: setup.input.uid,
-      inChannel: setup.inChannel, sampleRate: info.sampleRate, bufferFrames: info.bufferFrames)
+      inChannel: setup.inChannel, sampleRate: info.sampleRate,
+      outputBufferFrames: info.outputBufferFrames, inputBufferFrames: info.inputBufferFrames)
 
     let path = figures.path
     let headline = figures.headlineStats

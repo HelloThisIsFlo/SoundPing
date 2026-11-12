@@ -68,7 +68,9 @@ struct HitListener {
     guard twoDevice else { return }
     let first = await backend.currentInputFrame()
     try await backend.waitUntilCaptured(
-      throughInputFrame: first + Int64(Self.mappingWarmupCallbacks * info.bufferFrames))
+      throughInputFrame: first
+        + Int64(
+          Self.mappingWarmupCallbacks * Swift.max(info.outputBufferFrames, info.inputBufferFrames)))
     mapping = try HostMapping(log: await backend.stampLog(), info: info)
   }
 

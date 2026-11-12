@@ -56,7 +56,8 @@ import Testing
       toolVersion: "test", os: "macOS test", recipe: RecipeRegistry.roundTrip.ref, label: nil,
       tags: [], parameters: RunParameters(hits: 10, seed: 7),
       setup: SetupSnapshot(
-        setup: .simulatedDuplex, sampleRate: 48_000, bufferFrames: 128, simulated: true),
+        setup: .simulatedDuplex, sampleRate: 48_000, outputBufferFrames: 128,
+        inputBufferFrames: 128, simulated: true),
       measured: measured, histogram: nil, hits: [], rejectedCounts: [:],
       segments: RecipeRegistry.roundTrip.segments, corrections: [], simulation: nil)
     let lines = RunsCommand.Show.summaryLines(result)

@@ -52,14 +52,15 @@ public struct ReportedLatency: Codable, Sendable, Equatable {
     self.source = source
   }
 
-  /// `bufferFrames` is SoundPing's own I/O buffer size, which both directions share. A direction
-  /// the device does not have contributes zeros.
+  /// `outputBufferFrames` and `inputBufferFrames` are SoundPing's own I/O buffer sizes on the two
+  /// devices. They are equal on one duplex device and can differ on two, each device clamping the
+  /// requested size to its own range. A direction the device does not have contributes zeros.
   public static func compute(
-    output: DeviceInfo, outChannels: [Int], input: DeviceInfo, inChannel: Int, bufferFrames: Int,
-    sampleRate: Double
+    output: DeviceInfo, outChannels: [Int], input: DeviceInfo, inChannel: Int,
+    outputBufferFrames: Int, inputBufferFrames: Int, sampleRate: Double
   ) -> ReportedLatency {
-    let out = report(output.output, channels: outChannels, bufferFrames: bufferFrames)
-    let inp = report(input.input, channels: [inChannel], bufferFrames: bufferFrames)
+    let out = report(output.output, channels: outChannels, bufferFrames: outputBufferFrames)
+    let inp = report(input.input, channels: [inChannel], bufferFrames: inputBufferFrames)
 
     let path = out.pathFrames + inp.pathFrames
     let ioOffset =

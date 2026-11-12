@@ -7,7 +7,8 @@ private struct VersionHeader: Decodable { var schemaVersion: Int }
 
 enum VersionedFile {
   static func load<File: Decodable>(
-    _ type: File.Type, from url: URL, supportedVersion: Int, errorCode: String, noun: String
+    _ type: File.Type, from url: URL, supportedVersion: Int, alsoReads: Set<Int> = [],
+    errorCode: String, noun: String
   ) throws -> File? {
     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
@@ -28,7 +29,8 @@ enum VersionedFile {
     // whichever field happened to fail to decode.
     do {
       let header = try JSONDecoder().decode(VersionHeader.self, from: data)
-      guard header.schemaVersion == supportedVersion else {
+      guard header.schemaVersion == supportedVersion || alsoReads.contains(header.schemaVersion)
+      else {
         throw unreadable(
           "it has schemaVersion \(header.schemaVersion), this build reads \(supportedVersion)")
       }
