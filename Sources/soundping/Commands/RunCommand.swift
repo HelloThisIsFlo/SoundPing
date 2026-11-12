@@ -52,6 +52,12 @@ struct RunCommand: AsyncParsableCommand {
         Output.writeLine("")
         Output.writeLine(pretty.report(result))
       }
+
+      // The result is saved and printed. A run with too few valid hits still fails, so an agent
+      // reading only the exit code cannot take an untrustworthy number for a good one (D-03).
+      if let failure = RunGate.check(result) {
+        throw FailedAfterResult(error: failure)
+      }
     }
   }
 

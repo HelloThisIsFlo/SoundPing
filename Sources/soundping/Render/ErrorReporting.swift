@@ -17,44 +17,97 @@ struct FailedAfterResult: Error {
 }
 
 enum ErrorEnvelope {
-  /// The single JSON line an agent reads on stdout in --json and --ndjson modes.
+  private static let reserved: Set<String> = ["schemaVersion", "type", "kind", "code", "detail"]
+
+  /// The single JSON line an agent reads on stdout in --json and --ndjson modes:
+  /// `schemaVersion`, `type: "error"`, `kind`, `code`, `detail`, then every context key at the
+  /// top level. Keys are sorted. A context key can never overwrite one of the five fixed fields.
   static func line(for error: SoundPingError) -> String {
-    ""
+    var object: [String: Any] = error.context.filter { !reserved.contains($0.key) }
+    object["schemaVersion"] = RunResult.currentSchemaVersion
+    object["type"] = "error"
+    object["kind"] = error.kind.rawValue
+    object["code"] = error.code
+    object["detail"] = error.detail
+    guard
+      let data = try? JSONSerialization.data(
+        withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+    else {
+      return
+        #"{"code":"\#(error.code)","kind":"\#(error.kind.rawValue)","schemaVersion":1,"type":"error"}"#
+    }
+    return String(decoding: data, as: UTF8.self)
   }
 }
 
 enum ErrorReporting {
   static func report(for error: Error, jsonMode: Bool) -> ErrorReport {
-    ErrorReport(stdout: nil, stderr: [], exitCode: 0)
+    switch error {
+    case let failed as FailedAfterResult:
+      return ErrorReport(
+        stdout: nil, stderr: humanLines(for: failed.error),
+        exitCode: ExitCodes.code(for: failed.error.kind))
+    case let known as SoundPingError:
+      return ErrorReport(
+        stdout: jsonMode ? ErrorEnvelope.line(for: known) : nil, stderr: humanLines(for: known),
+        exitCode: ExitCodes.code(for: known.kind))
+    default:
+      let unknown = SoundPingError.internalFailure("internal", "\(error)")
+      return ErrorReport(
+        stdout: jsonMode ? ErrorEnvelope.line(for: unknown) : nil, stderr: humanLines(for: unknown),
+        exitCode: ExitCodes.code(for: unknown.kind))
+    }
+  }
+
+  /// `error: <code>: <detail>`, plus `fix: …` when the error knows one.
+  static func humanLines(for error: SoundPingError) -> [String] {
+    var lines = ["error: \(error.code): \(error.detail)"]
+    if let fix = error.context["fix"] { lines.append("fix: \(fix)") }
+    return lines
   }
 }
 
 /// The quality gate after a completed run (D-03 gate class).
 enum RunGate {
-  /// `ceil(minValidFraction * hits)`.
+  /// `ceil(minValidFraction * hits)`. The small offset keeps `0.3 * 10`, which floating point
+  /// makes 3.0000000000000004, from demanding a fourth hit.
   static func requiredValid(hits: Int, minValidFraction: Double) -> Int {
-    0
+    Int((minValidFraction * Double(hits) - 1e-9).rounded(.up))
   }
 
+  /// nil when enough measured hits gave a number. The run is saved either way.
   static func check(_ result: RunResult) -> SoundPingError? {
-    nil
+    let hits = result.parameters.hits
+    let valid = result.measured.path?.valid ?? 0
+    let required = requiredValid(hits: hits, minValidFraction: result.parameters.minValidFraction)
+    guard valid < required else { return nil }
+    return SoundPingError(
+      kind: .gate, code: "tooFewValidHits",
+      detail:
+        "only \(valid) of \(hits) measured hits gave a number; at least \(required) are needed. The run is saved.",
+      context: [
+        "valid": String(valid), "hits": String(hits), "required": String(required),
+        "runPath": result.runPath,
+        "fix": "see rejectedCounts in the saved result for why hits were rejected, then run again",
+      ])
   }
 }
 
-/// Every command body runs inside this, so error output has one home.
+/// Every command body runs inside this, so error output has one home: the JSON envelope on
+/// stdout in the data modes, `error:` lines on stderr, and one exit code per failure class.
 func withErrorReporting(jsonMode: Bool, _ body: () async throws -> Void) async throws {
-  _ = jsonMode
   do {
     try await body()
-  } catch let error as SoundPingError {
-    FileHandle.standardError.write(Data("error: \(error.code): \(error.detail)\n".utf8))
-    throw ExitCode(1)
   } catch let error as ExitCode {
     throw error
   } catch let error as CleanExit {
     throw error
+  } catch let error as ValidationError {
+    throw error
   } catch {
-    FileHandle.standardError.write(Data("error: internal: \(error)\n".utf8))
-    throw ExitCode(1)
+    let report = ErrorReporting.report(for: error, jsonMode: jsonMode)
+    if let line = report.stdout { Output.writeLine(line) }
+    for line in report.stderr { Output.logLine(line) }
+    throw ExitCode(report.exitCode)
   }
 }
