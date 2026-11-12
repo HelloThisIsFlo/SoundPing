@@ -82,6 +82,11 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// requested size to different ranges end up with. Only a two-device run uses it; one duplex
   /// device has one buffer. Nil means the same as `bufferFrames`.
   public var outputBufferFrames: Int?
+  /// The buffer both devices report once IO has started, for a driver that applies the
+  /// per-process size only then: `open` reports `bufferFrames` (and `outputBufferFrames`), and
+  /// `start` returns this instead. Nothing is played before `start` returns, so the run measures
+  /// and records this size. Nil means the devices keep what `open` reported.
+  public var settledBufferFrames: Int?
   /// Global hit indices (the numbering of `HitRecord.index`, warm-ups first) that never arrive:
   /// the stimulus is not rendered, the capture holds only noise.
   public var missedHits: [Int]
@@ -119,6 +124,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     sampleRate: Double = 48_000,
     bufferFrames: Int = 128,
     outputBufferFrames: Int? = nil,
+    settledBufferFrames: Int? = nil,
     missedHits: [Int] = [],
     xrunHits: [Int] = [],
     driftPPM: Double = 0,
@@ -138,6 +144,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.sampleRate = sampleRate
     self.bufferFrames = bufferFrames
     self.outputBufferFrames = outputBufferFrames
+    self.settledBufferFrames = settledBufferFrames
     self.missedHits = missedHits
     self.xrunHits = xrunHits
     self.driftPPM = driftPPM
@@ -161,6 +168,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     sampleRate = try c.decode(Double.self, forKey: .sampleRate)
     bufferFrames = try c.decode(Int.self, forKey: .bufferFrames)
     outputBufferFrames = try c.decodeIfPresent(Int.self, forKey: .outputBufferFrames)
+    settledBufferFrames = try c.decodeIfPresent(Int.self, forKey: .settledBufferFrames)
     missedHits = try c.decodeIfPresent([Int].self, forKey: .missedHits) ?? []
     xrunHits = try c.decodeIfPresent([Int].self, forKey: .xrunHits) ?? []
     driftPPM = try c.decodeIfPresent(Double.self, forKey: .driftPPM) ?? 0
@@ -210,6 +218,8 @@ public actor SimulatedBackend: AudioBackend {
   private var pendingEvents: [PendingEvent] = []
   private var outputUID = ""
   private var inputUID = ""
+  /// What `open` reported; `start` returns it with the settled buffer sizes.
+  private var openedInfo: BackendInfo?
   /// The 1-based input channel this open captures.
   private var inChannel = 1
 
@@ -275,15 +285,26 @@ public actor SimulatedBackend: AudioBackend {
     let catalog = (try? SimulatedCatalog().listing().audio) ?? []
     let outputBuffer =
       twoDevices ? scenario.outputBufferFrames ?? scenario.bufferFrames : scenario.bufferFrames
-    return BackendInfo(
+    let info = BackendInfo(
       sampleRate: scenario.sampleRate, outputBufferFrames: outputBuffer,
       inputBufferFrames: scenario.bufferFrames, simulation: scenario, hostClock: Self.hostClock,
       outputDevice: catalog.first { $0.uid == setup.output.uid },
       inputDevice: catalog.first { $0.uid == setup.input.uid })
+    openedInfo = info
+    return info
   }
 
-  public func start() async throws {
+  public func start() async throws -> BackendInfo {
     started = true
+    guard var info = openedInfo else {
+      throw SoundPingError.internalFailure(
+        "notOpen", "the simulated backend was started before it was opened")
+    }
+    if let settled = scenario.settledBufferFrames {
+      info.outputBufferFrames = settled
+      info.inputBufferFrames = settled
+    }
+    return info
   }
 
   public func currentOutputFrame() async -> Int64 {

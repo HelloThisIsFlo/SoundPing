@@ -226,11 +226,14 @@ private struct Session: Sendable {
     let template = try nominal.atSampleRate(sampleRate)
 
     let runId = folder.lastPathComponent
+    // The buffer sizes the devices settled on at the start are the ones this run measures at, so
+    // the snapshot, the reported figures and the calibration key all come from the started info.
+    // Nothing has been played yet: the warm-up inside `start` is silence.
+    let info = try await backend.start()
     let snapshot = SetupSnapshot(
       setup: request.setup, sampleRate: sampleRate, outputBufferFrames: info.outputBufferFrames,
       inputBufferFrames: info.inputBufferFrames, simulated: info.simulation != nil)
 
-    try await backend.start()
     var listener = HitListener(
       backend: backend, info: info, templateFrames: Int64(template.samples.count),
       maxLatencyMs: parameters.maxLatencyMs,

@@ -197,7 +197,7 @@ public struct ChannelProbe: Sendable {
     channel: ChannelInfo, ceiling: Double, nominal: StimulusTemplate, info: BackendInfo,
     setup: ResolvedSetup, backend: any AudioBackend
   ) async throws -> Probed {
-    try await backend.start()
+    let info = try await backend.start()
     let template = try nominal.atSampleRate(info.sampleRate)
     var listener = HitListener(
       backend: backend, info: info, templateFrames: Int64(template.samples.count),

@@ -20,7 +20,7 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
     try await inner.open(setup, templates: templates)
   }
-  func start() async throws { try await inner.start() }
+  func start() async throws -> BackendInfo { try await inner.start() }
   func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
   func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
   func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }

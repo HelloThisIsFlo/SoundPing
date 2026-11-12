@@ -89,7 +89,11 @@ public protocol AudioBackend: AnyObject, Sendable {
   /// Opens the devices. Templates are made at a nominal rate; a backend regenerates them at the
   /// device's real rate with `StimulusTemplate.atSampleRate(_:)` and reports that rate back.
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo
-  func start() async throws
+  /// Starts the audio and returns once both directions are delivering callbacks. The returned info
+  /// is `open`'s with the buffer sizes the devices settled on, which is what the run measures and
+  /// records: a driver that applies the per-process size only once IO runs is adopted here, before
+  /// anything is played. A change after this point is a device event and aborts the run.
+  func start() async throws -> BackendInfo
   func currentOutputFrame() async -> Int64
   /// The input device's sample label of the next frame to be captured. A run on two devices waits
   /// from here to collect the callbacks its clock fit needs; on one device it equals the output label.

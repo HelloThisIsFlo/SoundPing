@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Testing
 
@@ -18,7 +19,7 @@ private actor LateEventBackend: AudioBackend {
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
     try await inner.open(setup, templates: templates)
   }
-  func start() async throws { try await inner.start() }
+  func start() async throws -> BackendInfo { try await inner.start() }
   func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
   func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
   func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
@@ -284,5 +285,63 @@ private actor LateEventBackend: AudioBackend {
     let codes = Set(DeviceListeners.deviceSelectors.compactMap { HALProperty.fourCharCode($0) })
     #expect(codes == ["livn", "nsrt", "fsiz", "slay", "over", "stpd"])
     #expect(HALProperty.fourCharCode(DeviceListeners.systemSelector) == "dev#")
+  }
+
+  // MARK: A buffer size that settles at the start is adopted (WR-05)
+
+  private static func finishedResult(_ events: [RunEvent]) -> RunResult? {
+    for case .finished(let result) in events { return result }
+    return nil
+  }
+
+  @Test func aBufferSizeThatSettlesAtTheStartIsAdoptedAndRecorded() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    // open reports 128; once IO runs the devices are at 256. Nothing is played before that.
+    let scenario = Scenario(jitterFrames: 0.5, bufferFrames: 128, settledBufferFrames: 256, seed: 5)
+    let outcome = await Self.run(SimulatedBackend(scenario: scenario), hits: 20, store: store)
+
+    #expect(outcome.error == nil)
+    let result = try #require(Self.finishedResult(outcome.events))
+    #expect(result.setup.outputBufferFrames == 256 && result.setup.inputBufferFrames == 256)
+    let reported = try #require(result.reported)
+    #expect(reported.output.bufferFrames == 256 && reported.input.bufferFrames == 256)
+    let key = try #require(result.calibration?.key)
+    #expect(key.outputBufferFrames == 256 && key.inputBufferFrames == 256)
+    // The armed event says the same, so a reader of the stream sees the adopted size too.
+    let armed = outcome.events.compactMap { event -> ArmedInfo? in
+      if case .armed(let info) = event { return info }
+      return nil
+    }
+    #expect(armed.first?.setup.inputBufferFrames == 256)
+  }
+
+  @Test func aChangeAfterTheSettledSizeIsAdoptedStillAborts() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    let scenario = Scenario(
+      jitterFrames: 0.5, bufferFrames: 128, settledBufferFrames: 256,
+      faults: [Fault(kind: .bufferChange, atHit: 12)], seed: 5)
+    let outcome = await Self.run(SimulatedBackend(scenario: scenario), hits: 20, store: store)
+
+    #expect(outcome.error?.kind == .deviceChanged)
+    #expect(outcome.error?.code == "bufferSizeChanged")
+    #expect(!Self.hasFinished(outcome.events))
+    #expect(Self.savedRunFiles(in: outcome.store).isEmpty)
+  }
+
+  @Test func theBufferBaselineIsReArmedAfterTheStartSettles() {
+    let device = AudioDeviceID(42)
+    let baselines = BufferBaselines([device: 128])
+    #expect(baselines.changed(device, now: 128) == nil)
+    #expect(baselines.changed(device, now: 256) == 128, "before the start, a change is news")
+
+    baselines.beginSettling()
+    #expect(baselines.changed(device, now: 256) == nil, "the settling is not news")
+    #expect(baselines.changed(device, now: 512) == nil)
+
+    baselines.adopt([device: 256])
+    #expect(baselines.changed(device, now: 256) == nil, "the settled size is the baseline now")
+    #expect(baselines.changed(device, now: 128) == 256, "a later change reports the new baseline")
   }
 }

@@ -42,7 +42,9 @@ public final class HALBackend: AudioBackend {
     var inputUID = ""
     var inputDeviceID = AudioDeviceID(kAudioObjectUnknown)
     var outputDeviceID = AudioDeviceID(kAudioObjectUnknown)
-    var reportedBuffer = 0
+    /// What the run measures with: `open`'s info, with the buffer sizes replaced by the ones the
+    /// devices settled on once IO started.
+    var info: BackendInfo?
     var sampleRate = 0.0
     var gapsReported = 0
     var stallReported = false
@@ -109,8 +111,9 @@ public final class HALBackend: AudioBackend {
     try Self.requireFloat32(outID, scope: kAudioObjectPropertyScopeOutput, name: outInfo.name)
     try Self.requireFloat32(inID, scope: kAudioObjectPropertyScopeInput, name: inInfo.name)
 
-    // SoundPing's own buffer size, per process; the HAL may clamp it. What the HAL reports back is
-    // what the run records (the DAW's buffer is a different number and not ours to read).
+    // SoundPing's own buffer size, per process; the HAL may clamp it, each device to its own range.
+    // What the HAL reports back is what the run records, per device (the DAW's buffer is a
+    // different number and not ours to read). `start()` reads both again once IO runs.
     let outBuffer = try Self.applyBuffer(
       outID, requested: setup.requestedBufferFrames, name: outInfo.name)
     let inBuffer =
@@ -160,8 +163,13 @@ public final class HALBackend: AudioBackend {
     }
     let listeners = DeviceListeners(watching: watched, rate: rate, rt: rt, sink: eventSink)
 
+    let info = BackendInfo(
+      sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
+      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo)
+
     state.withLock {
       $0.rt = rt
+      $0.info = info
       $0.listeners = listeners
       $0.devices = devices
       $0.templateIndex = index
@@ -169,14 +177,11 @@ public final class HALBackend: AudioBackend {
       $0.inputUID = inInfo.uid
       $0.inputDeviceID = inID
       $0.outputDeviceID = outID
-      $0.reportedBuffer = inBuffer
       $0.sampleRate = rate
       $0.stopped = false
     }
 
-    return BackendInfo(
-      sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
-      hostClock: .system, outputDevice: outInfo, inputDevice: inInfo)
+    return info
   }
 
   /// A check before the run failed (exit 65).
@@ -302,12 +307,15 @@ public final class HALBackend: AudioBackend {
 
   // MARK: Running
 
-  public func start() async throws {
-    let (rt, devices) = state.withLock { ($0.rt, $0.devices) }
+  public func start() async throws -> BackendInfo {
+    let (rt, devices, listeners) = state.withLock { ($0.rt, $0.devices, $0.listeners) }
     guard let rt else {
       throw SoundPingError.internalFailure(
         "notOpen", "the HAL backend was started before it was opened")
     }
+    // A driver may apply SoundPing's per-process buffer size only once IO runs. Until the warm-up
+    // below is over, a buffer size notification is that settling, not a change during the run.
+    listeners?.beginSettling()
     for (position, device) in devices.enumerated() {
       let status = AudioDeviceStart(device.id, device.procID)
       guard status == noErr else {
@@ -332,15 +340,35 @@ public final class HALBackend: AudioBackend {
       try await Task.sleep(for: Self.pollInterval)
     }
 
-    // The buffer the HAL settled on after the start is the one the run measures at.
-    let (inputID, inputUID, reported) = state.withLock {
-      ($0.inputDeviceID, $0.inputUID, $0.reportedBuffer)
+    // Both directions are delivering and nothing has been played: the warm-up is silence. The
+    // buffer sizes the HAL settled on are the ones the run measures at and records, so they are
+    // adopted here, for each device. From now on a different size is a change during the run and
+    // aborts it.
+    let (outputID, inputID, opened) = state.withLock {
+      ($0.outputDeviceID, $0.inputDeviceID, $0.info)
     }
-    if let now = HALProperty.get(inputID, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
-      Int(now) != reported
-    {
-      eventSink.yield(.bufferSizeChanged(uid: inputUID, from: reported, to: Int(now)))
+    guard var info = opened else {
+      throw SoundPingError.internalFailure(
+        "notOpen", "the HAL backend was started before it was opened")
     }
+    info.outputBufferFrames = Self.currentBuffer(outputID) ?? info.outputBufferFrames
+    info.inputBufferFrames =
+      outputID == inputID
+      ? info.outputBufferFrames : Self.currentBuffer(inputID) ?? info.inputBufferFrames
+    state.withLock { $0.info = info }
+    var settled = [outputID: info.outputBufferFrames]
+    settled[inputID] = info.inputBufferFrames
+    listeners?.adoptSettledBuffers(settled)
+    return info
+  }
+
+  /// The buffer size the HAL reports for `device` right now; nil when it cannot be read.
+  private static func currentBuffer(_ device: AudioDeviceID) -> Int? {
+    guard
+      let size = HALProperty.get(device, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
+      size > 0
+    else { return nil }
+    return Int(size)
   }
 
   /// Reads the microphone status of the app that owns consent and, when the user has not been

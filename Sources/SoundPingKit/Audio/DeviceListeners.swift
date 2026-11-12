@@ -20,6 +20,38 @@ private final class StopFlag: Sendable {
   func set() { flag.store(true, ordering: .relaxed) }
 }
 
+/// The buffer size each watched device is expected to keep, which a notification is compared
+/// with. It starts as the size `open` applied, can be re-based once when IO has started (a driver
+/// may apply a per-process size only then), and while that start-up settling is going on a
+/// notification is not news.
+final class BufferBaselines: Sendable {
+  private struct State {
+    var frames: [AudioDeviceID: Int]
+    var settling = false
+  }
+  private let state: Mutex<State>
+
+  init(_ frames: [AudioDeviceID: Int]) { state = Mutex(State(frames: frames)) }
+
+  func beginSettling() { state.withLock { $0.settling = true } }
+
+  /// The size the device was expected to keep when `now` differs from it; nil while settling or
+  /// when nothing differs.
+  func changed(_ id: AudioDeviceID, now: Int) -> Int? {
+    state.withLock { state in
+      guard !state.settling, let expected = state.frames[id], expected != now else { return nil }
+      return expected
+    }
+  }
+
+  func adopt(_ frames: [AudioDeviceID: Int]) {
+    state.withLock {
+      for (id, size) in frames { $0.frames[id] = size }
+      $0.settling = false
+    }
+  }
+}
+
 final class DeviceListeners: Sendable {
   /// The per-device selectors, with the four-character codes the HAL uses for them.
   static let deviceSelectors: [AudioObjectPropertySelector] = [
@@ -47,6 +79,9 @@ final class DeviceListeners: Sendable {
   }
 
   private let queue = DispatchQueue(label: "soundping.hal-listeners")
+  private let baselines: BufferBaselines
+  private let devices: [Watched]
+  private let sink: AsyncStream<DeviceEvent>.Continuation
   private let registrations = Mutex<[Registration]>([])
   private let stopped = StopFlag()
   /// How many registrations the HAL refused; the run still works, it just watches less.
@@ -58,6 +93,11 @@ final class DeviceListeners: Sendable {
   ) {
     let ids = devices.map(\.id)
     let uids = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0.uid) })
+    let baselines = BufferBaselines(
+      Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0.bufferFrames) }))
+    self.baselines = baselines
+    self.devices = devices
+    self.sink = sink
 
     for device in devices {
       let layout = Self.layout(of: device.id)
@@ -85,9 +125,9 @@ final class DeviceListeners: Sendable {
         guard !stopped.isSet else { return }
         guard
           let now = HALProperty.get(id, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
-          Int(now) != device.bufferFrames
+          let expected = baselines.changed(id, now: Int(now))
         else { return }
-        sink.yield(.bufferSizeChanged(uid: uid, from: device.bufferFrames, to: Int(now)))
+        sink.yield(.bufferSizeChanged(uid: uid, from: expected, to: Int(now)))
       }
       // 'slay', once per direction
       for scope in [kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput] {
@@ -119,6 +159,26 @@ final class DeviceListeners: Sendable {
       for id in ids where !listed.contains(id) {
         sink.yield(.gone(uid: uids[id] ?? "unknown"))
       }
+    }
+  }
+
+  /// From now until `adoptSettledBuffers`, a buffer size notification is not news: the HAL may
+  /// apply SoundPing's per-process size only when IO starts, and that is not a change made during
+  /// the run. Called just before the devices are started.
+  func beginSettling() { baselines.beginSettling() }
+
+  /// Makes `sizes` the buffer sizes the run keeps and ends the settling. Only a change away from
+  /// these after this point is a device event. A size that moved between the caller's read and
+  /// now is caught by reading again, so no change falls into the gap.
+  func adoptSettledBuffers(_ sizes: [AudioDeviceID: Int]) {
+    baselines.adopt(sizes)
+    for device in devices {
+      guard
+        let now = HALProperty.get(
+          device.id, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
+        let expected = baselines.changed(device.id, now: Int(now))
+      else { continue }
+      sink.yield(.bufferSizeChanged(uid: device.uid, from: expected, to: Int(now)))
     }
   }
 
