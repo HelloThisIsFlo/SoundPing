@@ -39,6 +39,64 @@ import Testing
       LevelRamp.classify(setup: byTransport, output: Self.duplex, input: Self.duplex) == .loopback)
   }
 
+  // MARK: ears first (CR-03)
+
+  @Test func aVirtualInputNeverLiftsTheCeilingOfAnOutputThatReachesEars() {
+    let virtualInput = Self.duplex
+    #expect(virtualInput.transport == "virtual")
+
+    let headphones = Self.headphones()
+    let onHeadphones = Self.setup(output: headphones, input: virtualInput)
+    #expect(
+      LevelRamp.classify(setup: onHeadphones, output: headphones, input: virtualInput)
+        == .headphones)
+
+    let earbuds = Self.bluetooth(from: Self.macSpeakers)
+    let onBluetooth = Self.setup(output: earbuds, input: virtualInput)
+    #expect(
+      LevelRamp.classify(setup: onBluetooth, output: earbuds, input: virtualInput) == .headphones)
+
+    let onSpeakers = Self.setup(output: Self.macSpeakers, input: virtualInput)
+    #expect(
+      LevelRamp.classify(setup: onSpeakers, output: Self.macSpeakers, input: virtualInput)
+        == .speaker, "built-in speakers keep -12 dBFS, not the -6 dBFS loopback ceiling")
+  }
+
+  @Test func aLoopChannelOnAnotherDeviceNeverLiftsTheCeilingEither() {
+    // "Loop 1" on the interface returns what the interface played, not what the laptop played.
+    let headphones = Self.headphones()
+    let onHeadphones = Self.setup(inChannelName: "Loop 1", output: headphones, input: Self.scarlett)
+    #expect(
+      LevelRamp.classify(setup: onHeadphones, output: headphones, input: Self.scarlett)
+        == .headphones)
+
+    let earbuds = Self.bluetooth(from: Self.macSpeakers)
+    let onBluetooth = Self.setup(inChannelName: "Loop 1", output: earbuds, input: Self.scarlett)
+    #expect(
+      LevelRamp.classify(setup: onBluetooth, output: earbuds, input: Self.scarlett) == .headphones)
+
+    let onSpeakers = Self.setup(
+      inChannelName: "Loop 1", output: Self.macSpeakers, input: Self.scarlett)
+    #expect(
+      LevelRamp.classify(setup: onSpeakers, output: Self.macSpeakers, input: Self.scarlett)
+        == .speaker)
+
+    // An interface output next to a virtual input on another device is no loop either.
+    let usb = Self.setup(output: Self.scarlett, input: Self.duplex)
+    #expect(LevelRamp.classify(setup: usb, output: Self.scarlett, input: Self.duplex) == .unknown)
+  }
+
+  @Test func aVirtualOutputIsALoopbackWhateverItsInput() {
+    let setup = Self.setup(output: Self.duplex, input: Self.macMicrophone)
+    #expect(
+      LevelRamp.classify(setup: setup, output: Self.duplex, input: Self.macMicrophone)
+        == .loopback)
+    // The recorded transports are enough when the device list is unavailable.
+    let recorded = ResolvedSetup(
+      output: Self.duplex.ref, input: Self.duplex.ref, outChannels: [1, 2], inChannel: 1)
+    #expect(LevelRamp.classify(setup: recorded, output: nil, input: nil) == .loopback)
+  }
+
   @Test func theBuiltInOutputIsHeadphonesOnItsHeadphoneSourceAndSpeakersOtherwise() {
     let headphones = Self.headphones()
     let onHeadphones = Self.setup(output: headphones, input: Self.macMicrophone)
@@ -445,6 +503,25 @@ import Testing
     #expect(error.context["listener"] == "headphones")
     #expect(error.context["ceilingDbfs"] == "-30.0")
     #expect(collected.probes.map(\.levelDbfs) == [-48, -42, -36, -30])
+  }
+
+  @Test func aBluetoothOutputWithAVirtualInputStillRampsNoHigherThanTheHeadphoneCeiling()
+    async throws
+  {
+    var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
+    output.transport = "bluetooth"
+    // A virtual device that carries other audio (not silent), on a different device than the output.
+    let setup = ResolvedSetup(
+      output: output, input: SimulatedCatalog.duplex.ref, outChannels: [1, 2], inChannel: 1,
+      inChannelName: "Loop 1")
+    let collected = try await Self.run(
+      Scenario(jitterFrames: 0, pathGainDb: -80, seed: 3), setup: setup)
+    let error = try #require(collected.error)
+    #expect(error.code == "nothingHeardAtCeiling")
+    #expect(error.context["listener"] == "headphones")
+    #expect(error.context["ceilingDbfs"] == "-30.0")
+    #expect(collected.probes.map(\.levelDbfs) == [-48, -42, -36, -30])
+    #expect(collected.probes.allSatisfy { $0.levelDbfs <= -30 })
   }
 
   @Test func nothingHeardOnAHeadphoneListenerPointsAtMaxLevelForASpeaker() {

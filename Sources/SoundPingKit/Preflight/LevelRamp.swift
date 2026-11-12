@@ -38,10 +38,14 @@ public struct LevelRamp: Sendable {
   ///
   /// | Listener | Ceiling | When |
   /// |---|---|---|
-  /// | loopback | -6 dBFS | a `Loop` input channel or a virtual input device |
-  /// | speaker | -12 dBFS | the built-in output, on anything but its headphone data source |
   /// | headphones | -30 dBFS | the built-in output on its headphone data source, or any Bluetooth output |
+  /// | loopback | -6 dBFS | the output feeds the input: one device with a `Loop` input channel or a virtual input, or a virtual output |
+  /// | speaker | -12 dBFS | the built-in output, on anything but its headphone data source |
   /// | unknown | -18 dBFS | everything else (USB and other interfaces) |
+  ///
+  /// The headphone check comes first: a virtual input or a `Loop` channel on another device
+  /// returns nothing the output played, so it never lifts the ceiling of an output that reaches
+  /// someone's ears.
   ///
   /// A Bluetooth output is nearly always earbuds or headphones, so it gets the headphone ceiling. A
   /// wrong guess costs a Bluetooth-speaker user one flag (`--max-level`); the opposite wrong guess
@@ -51,12 +55,20 @@ public struct LevelRamp: Sendable {
   public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
     -> ListenerKind
   {
-    let inputTransport = input?.transport ?? setup.input.transport
-    let looped = setup.inChannelName?.lowercased().hasPrefix("loop") == true
-    if looped || inputTransport == "virtual" { return .loopback }
+    // Ears first (T-01-28): an output a person hears keeps its own ceiling whatever the input is.
+    // A Loop channel or a virtual input only returns what the output played when the output feeds
+    // it, so it cannot lift the ceiling of an output that goes to the ears.
+    if outputIsHeadphones(setup: setup, output: output) { return .headphones }
 
     let outputTransport = output?.transport ?? setup.output.transport
-    if outputIsHeadphones(setup: setup, output: output) { return .headphones }
+    let inputTransport = input?.transport ?? setup.input.transport
+    let sameDevice = setup.output.uid == setup.input.uid
+    let looped = setup.inChannelName?.lowercased().hasPrefix("loop") == true
+    // A loop needs the output to feed the input: one device (an interface loop channel, a virtual
+    // duplex) or a virtual output. A physical output next to some other virtual input is no loop.
+    if (sameDevice && (looped || inputTransport == "virtual")) || outputTransport == "virtual" {
+      return .loopback
+    }
     if outputTransport == "builtIn" { return .speaker }
     return .unknown
   }
