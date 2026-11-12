@@ -76,6 +76,7 @@ import Testing
         lowestConfidence = Swift.min(lowestConfidence, hit.confidence)
       }
     }
+    print("\(id): worst sub-sample error \(worst) frame, lowest confidence \(lowestConfidence)")
     #expect(worst <= 0.1, "\(id) worst error \(worst) frame")
     #expect(lowestConfidence >= 0.8, "\(id) lowest confidence \(lowestConfidence)")
   }
@@ -114,7 +115,7 @@ import Testing
     // The first arrival is 0.55 of the strongest; two later ones reach 1.0 and 0.95, 200 frames
     // (more than 1 ms) apart.
     let window = Self.render(
-      template, arrivals: [(1000, 0.275), (1200, 0.5), (1400, 0.475)])
+      template, arrivals: [(1000, 0.165), (1200, 0.3), (1400, 0.285)])
     #expect(
       correlator.detect(window: window, windowStartFrame: 0, stamps: [])
         == .rejected(.ambiguousPeaks))
@@ -131,7 +132,8 @@ import Testing
       correlator.detect(window: noise, windowStartFrame: 0, stamps: []) == .rejected(.lowConfidence)
     )
     let silence = [Float](repeating: 0, count: Self.windowFrames)
-    #expect(correlator.detect(window: silence, windowStartFrame: 0, stamps: []) == .rejected(.noPeak))
+    #expect(
+      correlator.detect(window: silence, windowStartFrame: 0, stamps: []) == .rejected(.noPeak))
   }
 
   @Test(arguments: ["chirp-loopback", "chirp-speaker"])
