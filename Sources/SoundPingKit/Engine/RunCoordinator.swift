@@ -316,9 +316,10 @@ private struct Session: Sendable {
       case .fail(.clipping):
         throw Preflight.clippingError(peakDbfs: played.record.peakDbfs, levelDbfs: level)
       case .fail(.nothingHeard):
+        // With --level, `level` is what was played: the requested level after the clamp (WR-16).
         throw Preflight.nothingHeardError(
-          loudness: plan.loudness, probes: probes.count, chosenLevel: fixed,
-          terminalApp: plan.permission.app.name)
+          loudness: plan.loudness, probes: probes.count, playedLevel: fixed.map { _ in level },
+          requestedLevel: fixed, terminalApp: plan.permission.app.name)
       }
     }
   }

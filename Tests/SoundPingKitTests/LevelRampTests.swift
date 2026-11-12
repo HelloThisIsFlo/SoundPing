@@ -775,7 +775,7 @@ private actor GlitchedWindowsBackend: AudioBackend {
     let headphones = try LevelRamp.loudness(
       output: .headphones, detected: .headphones, options: PreflightOptions())
     let error = Preflight.nothingHeardError(
-      loudness: headphones, probes: 4, chosenLevel: nil, terminalApp: nil)
+      loudness: headphones, probes: 4, playedLevel: nil, terminalApp: nil)
     let fix = error.context["fix"] ?? ""
     #expect(fix.contains("--max-level"), "\(fix)")
     #expect(fix.contains("Bluetooth speaker"), "\(fix)")
@@ -788,7 +788,7 @@ private actor GlitchedWindowsBackend: AudioBackend {
     let unknown = Preflight.nothingHeardError(
       loudness: try LevelRamp.loudness(
         output: .other, detected: .unknown, options: PreflightOptions()),
-      probes: 4, chosenLevel: nil, terminalApp: nil)
+      probes: 4, playedLevel: nil, terminalApp: nil)
     #expect(unknown.context["fix"]?.contains("--max-level") == true)
     #expect(unknown.context["fix"]?.contains("output alone") == true)
     #expect(unknown.context["fix"]?.contains("Bluetooth") == false)
@@ -798,7 +798,7 @@ private actor GlitchedWindowsBackend: AudioBackend {
     let loop = Preflight.nothingHeardError(
       loudness: try LevelRamp.loudness(
         output: .other, detected: .loopback, options: PreflightOptions()),
-      probes: 6, chosenLevel: nil, terminalApp: nil)
+      probes: 6, playedLevel: nil, terminalApp: nil)
     #expect(loop.context["fix"]?.contains("loop routing") == true)
     #expect(loop.context["fix"]?.contains("no loop gets a louder one") == true)
     #expect(loop.context["fix"]?.contains("--max-level") == true)
@@ -807,13 +807,13 @@ private actor GlitchedWindowsBackend: AudioBackend {
     let lowered = Preflight.nothingHeardError(
       loudness: try LevelRamp.loudness(
         output: .other, detected: .loopback, options: PreflightOptions(listener: .headphones)),
-      probes: 4, chosenLevel: nil, terminalApp: nil)
+      probes: 4, playedLevel: nil, terminalApp: nil)
     #expect(lowered.context["fix"]?.contains("--listener headphones lowered") == true)
     #expect(lowered.detail.contains("set by --listener headphones"), "\(lowered.detail)")
     let capped = Preflight.nothingHeardError(
       loudness: try LevelRamp.loudness(
         output: .headphones, detected: .headphones, options: PreflightOptions(maxLevelDbfs: -20)),
-      probes: 5, chosenLevel: nil, terminalApp: nil)
+      probes: 5, playedLevel: nil, terminalApp: nil)
     #expect(capped.context["fix"]?.contains("your --max-level") == true)
   }
 
@@ -867,6 +867,33 @@ private actor GlitchedWindowsBackend: AudioBackend {
       preflight: PreflightOptions(listener: .headphones))
     #expect(capped.result?.preflight?.lockedLevelDbfs == -30)
     #expect(capped.result?.preflight?.warnings.isEmpty == false, "the cap is said, not silent")
+  }
+
+  @Test func nothingHeardAtAClampedLevelNamesTheLevelReallyPlayed() async throws {
+    // WR-16: --level -3 on a Bluetooth output plays at the -30 dBFS ceiling; the error must say
+    // -30 (and the clamp), never that -3 dBFS was already played and inaudible.
+    var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
+    output.transport = "bluetooth"
+    let setup = ResolvedSetup(
+      output: output, input: SimulatedCatalog.macMicrophone.ref, outChannels: [1, 2], inChannel: 1)
+    let collected = try await Self.run(
+      Scenario(jitterFrames: 0, pathGainDb: -80, seed: 3), level: -3, setup: setup)
+    let error = try #require(collected.error)
+    #expect(error.code == "nothingHeardAtCeiling")
+    #expect(collected.probes.map(\.levelDbfs) == [-30])
+    #expect(error.detail.hasPrefix("Nothing was heard at -30 dBFS"), "\(error.detail)")
+    #expect(
+      error.detail.contains("--level -3 was lowered to the -30 dBFS ceiling"), "\(error.detail)")
+    #expect(!error.detail.contains("chosen level of -3"), "\(error.detail)")
+    #expect(error.context["playedLevelDbfs"] == "-30.0")
+    #expect(error.context["requestedLevelDbfs"] == "-3.0")
+
+    // A --level at or below the ceiling is played as asked, and said as before.
+    let quiet = try await Self.run(
+      Scenario(jitterFrames: 0, pathGainDb: -80, seed: 3), level: -36, setup: setup)
+    let quietError = try #require(quiet.error)
+    #expect(quietError.detail == "Nothing was heard at the chosen level of -36 dBFS")
+    #expect(quietError.context["playedLevelDbfs"] == "-36.0")
   }
 
   @Test func theChirpBandFollowsTheListenerUnlessATemplateWasNamed() async throws {

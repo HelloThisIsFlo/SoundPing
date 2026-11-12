@@ -173,7 +173,7 @@ public struct ChannelProbe: Sendable {
         throw SoundPingError.internalFailure("noLoudness", "the probe has no ceiling")
       }
       throw Preflight.nothingHeardError(
-        loudness: loudness, probes: scores.count, chosenLevel: nil, terminalApp: app?.name)
+        loudness: loudness, probes: scores.count, playedLevel: nil, terminalApp: app?.name)
     }
 
     let runnerUp = ranked.dropFirst().first

@@ -98,12 +98,22 @@ public struct Preflight: Sendable {
 
   /// Nothing heard even at the ceiling (or at `--level`). The hint names what set the ceiling and
   /// the one flag that raises it, `--max-level` (the model is at `LevelRamp.loudness`).
+  ///
+  /// With `--level`, `playedLevel` is the level really played (after the clamp to the ceiling) and
+  /// `requestedLevel` the one asked for: the message names the played one, and the clamp (WR-16),
+  /// so nobody is told an inaudible sound was already louder than it was.
   static func nothingHeardError(
-    loudness: LevelRamp.Loudness, probes: Int, chosenLevel: Double?, terminalApp: String?
+    loudness: LevelRamp.Loudness, probes: Int, playedLevel: Double?,
+    requestedLevel: Double? = nil, terminalApp: String?
   ) -> SoundPingError {
     let detail: String
-    if let chosenLevel {
-      detail = String(format: "Nothing was heard at the chosen level of %.0f dBFS", chosenLevel)
+    if let playedLevel, let requestedLevel, requestedLevel > playedLevel {
+      detail = String(
+        format:
+          "Nothing was heard at %.0f dBFS (--level %.0f was lowered to the %.0f dBFS ceiling, %@)",
+        playedLevel, requestedLevel, loudness.ceilingDbfs, loudness.ceilingOrigin)
+    } else if let playedLevel {
+      detail = String(format: "Nothing was heard at the chosen level of %.0f dBFS", playedLevel)
     } else {
       detail = String(
         format: "Nothing was heard even at the ceiling of %.0f dBFS (%@)",
@@ -128,13 +138,14 @@ public struct Preflight: Sendable {
       fix +=
         "; the ceiling comes from the output alone (an interface, a virtual device or a loop gets no louder one, and --listener does not raise it), so only --max-level allows a louder test sound, for example --max-level -6 for a loop that really needs it; pass it only when you know the level is safe"
     }
-    return .preflight(
-      "nothingHeardAtCeiling", detail,
-      context: [
-        "ceilingDbfs": String(loudness.ceilingDbfs), "listener": loudness.kind.rawValue,
-        "detectedListener": loudness.detected.rawValue, "output": loudness.output.rawValue,
-        "ceilingSource": loudness.source.rawValue, "probes": String(probes), "fix": fix,
-      ])
+    var context = [
+      "ceilingDbfs": String(loudness.ceilingDbfs), "listener": loudness.kind.rawValue,
+      "detectedListener": loudness.detected.rawValue, "output": loudness.output.rawValue,
+      "ceilingSource": loudness.source.rawValue, "probes": String(probes), "fix": fix,
+    ]
+    if let playedLevel { context["playedLevelDbfs"] = String(playedLevel) }
+    if let requestedLevel { context["requestedLevelDbfs"] = String(requestedLevel) }
+    return .preflight("nothingHeardAtCeiling", detail, context: context)
   }
 }
 
