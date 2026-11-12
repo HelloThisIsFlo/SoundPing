@@ -90,6 +90,10 @@ final class DeviceListeners: Sendable {
     /// built-in output already means the -30 dBFS headphone ceiling): the data source read when the
     /// listener registers is then the baseline.
     var outputDataSource: String? = nil
+    /// The output jack state read at open (`BackendInfo.outputJack`), the same way: a jack state
+    /// that differs from it, even before the first notification, is a route change. Nil when none
+    /// could be read at open: the jack state read when the listener registers is then the baseline.
+    var outputJack: String? = nil
   }
 
   /// How far before the overload notification's own position the fault interval starts, at least.
@@ -203,43 +207,52 @@ final class DeviceListeners: Sendable {
   }
 
   /// 'ssrc' and 'jack' on the output scope (WR-14), each only where the device implements it, so a
-  /// device without a data source or a jack is not counted as a refused registration. The data
-  /// source is compared with the one the loudness was decided with, and read once more after
-  /// registering, so a switch between the device read in `open` and now is not missed. Without a
-  /// classified data source, the one read at registration is the baseline.
+  /// device without a data source or a jack is not counted as a refused registration. Both follow
+  /// one rule: the baseline is the value read at open (the route the loudness was decided with),
+  /// and the property is read once more right after registering, so a switch between the read in
+  /// `open` and the listener is not missed. Without a value from open, the one read at
+  /// registration is the baseline.
   private func watchOutputRoute(of device: Watched) {
+    watchOutputRoute(
+      of: device, kAudioDevicePropertyDataSource, property: "dataSource",
+      decided: device.outputDataSource, read: Self.outputDataSource)
+    watchOutputRoute(
+      of: device, kAudioDevicePropertyJackIsConnected, property: "jackIsConnected",
+      decided: device.outputJack, read: Self.jackIsConnected)
+  }
+
+  private func watchOutputRoute(
+    of device: Watched, _ selector: AudioObjectPropertySelector, property: String,
+    decided: String?, read: @escaping @Sendable (AudioDeviceID) -> String?
+  ) {
     let id = device.id
     let uid = device.uid
     let sink = self.sink
     let scope = kAudioObjectPropertyScopeOutput
+    guard Self.implements(id, selector, scope: scope) else { return }
 
-    if Self.implements(id, kAudioDevicePropertyDataSource, scope: scope) {
-      let classified = device.outputDataSource ?? Self.outputDataSource(of: id)
-      let check: @Sendable () -> Void = {
-        let now = Self.outputDataSource(of: id)
-        guard now != classified else { return }
-        sink.yield(
-          .outputRouteChanged(
-            uid: uid, property: "dataSource", from: classified ?? "none", to: now ?? "none"))
+    let baseline = decided ?? read(id)
+    let check: @Sendable () -> Void = {
+      let now = read(id)
+      if let event = Self.routeChange(uid: uid, property: property, baseline: baseline, now: now) {
+        sink.yield(event)
       }
-      add(id, kAudioDevicePropertyDataSource, scope: scope) { [stopped] in
-        guard !stopped.isSet else { return }
-        check()
-      }
+    }
+    add(id, selector, scope: scope) { [stopped] in
+      guard !stopped.isSet else { return }
       check()
     }
+    check()
+  }
 
-    if Self.implements(id, kAudioDevicePropertyJackIsConnected, scope: scope) {
-      let connected = Self.jackIsConnected(of: id)
-      add(id, kAudioDevicePropertyJackIsConnected, scope: scope) { [stopped] in
-        guard !stopped.isSet else { return }
-        let now = Self.jackIsConnected(of: id)
-        guard now != connected else { return }
-        sink.yield(
-          .outputRouteChanged(
-            uid: uid, property: "jackIsConnected", from: connected ?? "none", to: now ?? "none"))
-      }
-    }
+  /// The route change one output-route property shows: nil while it still reads `baseline`,
+  /// otherwise `outputRouteChanged` from the baseline to the value read now ("none" for nil).
+  static func routeChange(uid: String, property: String, baseline: String?, now: String?)
+    -> DeviceEvent?
+  {
+    guard now != baseline else { return nil }
+    return .outputRouteChanged(
+      uid: uid, property: property, from: baseline ?? "none", to: now ?? "none")
   }
 
   private static func implements(

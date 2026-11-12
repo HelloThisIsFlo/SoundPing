@@ -163,7 +163,9 @@ struct HardwareRoundTripTests {
 
   /// WR-14 on the real HAL, without playing anything: the output-route listeners register on a
   /// built-in output that reports a data source, say nothing while it keeps the one the run was
-  /// classified with, and report a route change as soon as it differs from it.
+  /// classified with, and report a route change as soon as it differs from it. The jack state
+  /// follows the same rule where the output has one: a jack state from open that the listener no
+  /// longer reads is reported right after registering.
   @Test func theOutputRouteIsWatchedOnARealBuiltInOutput() async throws {
     let listing = try HALDeviceCatalog().listing()
     guard
@@ -177,8 +179,11 @@ struct HardwareRoundTripTests {
     let id = try #require(
       ids.first { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == device.uid })
     #expect(DeviceListeners.outputDataSource(of: id) == device.output?.dataSource)
+    let jack = DeviceListeners.jackIsConnected(of: id)
 
-    func watch(classifiedAs dataSource: String?) async -> [DeviceEvent] {
+    func watch(classifiedAs dataSource: String?, jack openedJack: String? = nil) async
+      -> [DeviceEvent]
+    {
       let rt = RTState(
         RTState.Configuration(
           sampleRate: device.nominalSampleRate, inputSlot: nil, outputSlots: [], templates: [],
@@ -188,7 +193,7 @@ struct HardwareRoundTripTests {
         watching: [
           .init(
             id: id, uid: device.uid, bufferFrames: 512, captures: false, plays: true,
-            outputDataSource: dataSource)
+            outputDataSource: dataSource, outputJack: openedJack)
         ],
         rate: device.nominalSampleRate, rt: rt, sink: sink)
       #expect(listeners.refused.load(ordering: .relaxed) == 0)
@@ -206,6 +211,16 @@ struct HardwareRoundTripTests {
         .outputRouteChanged(
           uid: device.uid, property: "dataSource", from: "xxxx",
           to: device.output?.dataSource ?? "none")
+      ])
+
+    // The jack, where this output reports one: its open value is the baseline, checked at once.
+    guard let jack else { return }
+    #expect(await watch(classifiedAs: device.output?.dataSource, jack: jack).isEmpty)
+    let other = jack == "connected" ? "disconnected" : "connected"
+    let unplugged = await watch(classifiedAs: device.output?.dataSource, jack: other)
+    #expect(
+      unplugged == [
+        .outputRouteChanged(uid: device.uid, property: "jackIsConnected", from: other, to: jack)
       ])
   }
 }

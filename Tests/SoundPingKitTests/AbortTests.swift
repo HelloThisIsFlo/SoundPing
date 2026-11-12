@@ -394,6 +394,30 @@ private actor RouteBetweenOpensBackend: AudioBackend {
     #expect(route == ["ssrc", "jack"])
   }
 
+  /// The one comparison both output-route properties go through, against the value read at open,
+  /// at registration and on every notification (the HAL wiring itself is the hardware test
+  /// `theOutputRouteIsWatchedOnARealBuiltInOutput`).
+  @Test(arguments: [
+    ("dataSource", "ispk", "hdpn"), ("jackIsConnected", "disconnected", "connected"),
+  ])
+  func anOutputRoutePropertyThatLeavesItsOpenValueIsARouteChange(
+    property: String, opened: String, now: String
+  ) {
+    #expect(
+      DeviceListeners.routeChange(
+        uid: "built-in", property: property, baseline: opened, now: opened)
+        == nil)
+    #expect(
+      DeviceListeners.routeChange(uid: "built-in", property: property, baseline: opened, now: now)
+        == .outputRouteChanged(uid: "built-in", property: property, from: opened, to: now))
+    #expect(
+      DeviceListeners.routeChange(uid: "built-in", property: property, baseline: opened, now: nil)
+        == .outputRouteChanged(uid: "built-in", property: property, from: opened, to: "none"))
+    #expect(
+      DeviceListeners.routeChange(uid: "built-in", property: property, baseline: nil, now: nil)
+        == nil)
+  }
+
   // MARK: An output that switches route aborts (WR-14)
 
   @Test func anOutputRouteChangeIsADeviceChange() {

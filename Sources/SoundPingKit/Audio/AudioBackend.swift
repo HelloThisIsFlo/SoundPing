@@ -100,8 +100,9 @@ public struct BackendInfo: Sendable, Equatable {
   public var inputDevice: DeviceInfo?
   /// The output's jack state when it was opened (`'jack'`), worded as `outputRouteChanged` words
   /// it ("connected" or "disconnected"); nil when the output has no jack or it could not be read.
-  /// Its data source is `outputDevice.output.dataSource`. The channel probe compares both across
-  /// its reopens (WR-15).
+  /// Its data source is `outputDevice.output.dataSource`. Both are the route the loudness is
+  /// decided with: the HAL's route listeners compare with them from registration on (WR-14), and
+  /// the channel probe compares both across its reopens (WR-15).
   public var outputJack: String?
   /// Things the backend could not set up that the person should know, for example device-change
   /// notifications the HAL refused. They end up in the run's preflight warnings.

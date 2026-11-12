@@ -132,6 +132,9 @@ public final class HALBackend: AudioBackend {
     }
 
     let outID = try Self.deviceID(forUID: outInfo.uid)
+    // The jack state is read here, at open, like the data source in `outInfo`: both are the route
+    // the loudness is decided with, and the listeners compare with them from registration on.
+    let outJack = DeviceListeners.jackIsConnected(of: outID)
     let inID = try Self.deviceID(forUID: inInfo.uid)
     try Self.requireFloat32(
       outID, scope: kAudioObjectPropertyScopeOutput, name: outInfo.name,
@@ -186,7 +189,7 @@ public final class HALBackend: AudioBackend {
     var watched = [
       DeviceListeners.Watched(
         id: outID, uid: outInfo.uid, bufferFrames: outBuffer, captures: outID == inID,
-        plays: true, outputDataSource: outInfo.output?.dataSource)
+        plays: true, outputDataSource: outInfo.output?.dataSource, outputJack: outJack)
     ]
     if inID != outID {
       watched.append(
@@ -207,7 +210,7 @@ public final class HALBackend: AudioBackend {
     let info = BackendInfo(
       sampleRate: rate, outputBufferFrames: outBuffer, inputBufferFrames: inBuffer,
       hostClock: .system, outputDevice: outInfo, inputDevice: inInfo,
-      outputJack: DeviceListeners.jackIsConnected(of: outID), warnings: warnings)
+      outputJack: outJack, warnings: warnings)
 
     state.withLock {
       $0.rt = rt
