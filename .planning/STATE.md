@@ -4,10 +4,10 @@ current_phase: 01
 current_phase_name: Audio Round Trip
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-11-12T19:38:47.264Z"
+last_updated: "2026-11-12T21:44:12.745Z"
 last_activity: 2026-11-12
 last_activity_desc: Phase 01 execution started
-state_head: 3c66f84e1613a9ad65f58e2400d9cbe5dda9bbf3
+state_head: 89c30d5bfdbce9fea052bfd7c33c4c2d7fd16a8b
 progress:
   total_phases: 7
   completed_phases: 0
@@ -83,6 +83,7 @@ Recent decisions affecting current work:
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 261112-ql0 | Redesign real-time stamp and glitch recording (WR-03, WR-01, IN-08) | 2026-11-12 | 3c66f84 | [261112-ql0-redesign-real-time-stamp-and-glitch-reco](./quick/261112-ql0-redesign-real-time-stamp-and-glitch-reco/) |
+| 2 | Channel probe picks its chirp band from the listener, like a run | 2026-11-12 | 89c30d5 | — |
 
 ## Deferred Items
 
