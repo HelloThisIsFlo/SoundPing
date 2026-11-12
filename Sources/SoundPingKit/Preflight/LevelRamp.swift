@@ -92,7 +92,8 @@ public struct LevelRamp: Sendable {
   /// `fixedLevelDbfs` is `--level`: one confirmation probe at that level, no ramp.
   public init(ceilingDbfs: Double, fixedLevelDbfs: Double? = nil) {
     self.ceiling = ceilingDbfs
-    self.fixedLevel = fixedLevelDbfs
+    // A non-finite level would defeat the ceiling clamp (min(NaN, c) is NaN), so it is dropped.
+    self.fixedLevel = fixedLevelDbfs.flatMap { $0.isFinite ? $0 : nil }
   }
 
   /// The level of the first probe, never above the ceiling.

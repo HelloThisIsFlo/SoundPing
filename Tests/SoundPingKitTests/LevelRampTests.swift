@@ -146,6 +146,14 @@ import Testing
     #expect(ramp.firstLevel == -60)
   }
 
+  @Test func aNonFiniteFixedLevelCannotDefeatTheCeiling() {
+    for level in [Double.nan, .infinity, -.infinity] {
+      let ramp = LevelRamp(ceilingDbfs: -30, fixedLevelDbfs: level)
+      #expect(ramp.firstLevel.isFinite)
+      #expect(ramp.firstLevel <= -30)
+    }
+  }
+
   @Test func aPeakOfExactlyMinusSixSatisfiesTheLockTarget() {
     var ramp = LevelRamp(ceilingDbfs: -6)
     #expect(ramp.record(level: -48, confidence: 0.9, peakDbfs: -6.0) == .lock(-48, warning: nil))

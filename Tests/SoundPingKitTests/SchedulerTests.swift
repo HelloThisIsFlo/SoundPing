@@ -89,4 +89,17 @@ import Testing
     #expect(Self.spacingError(defaults, templateDurationMs: 50) == nil)
     #expect(Self.spacingError(defaults, templateDurationMs: 50.5)?.code == "spacingTooShort")
   }
+
+  @Test func aNonFiniteOrPositiveLevelIsRefused() {
+    for level in [Double.nan, .infinity, -.infinity, 3] {
+      var parameters = Self.parameters()
+      parameters.levelDbfs = level
+      #expect(
+        Self.spacingError(parameters, templateDurationMs: 30)?.code == "invalidParameters",
+        "level \(level) must be refused")
+    }
+    var parameters = Self.parameters()
+    parameters.levelDbfs = -24
+    #expect(Self.spacingError(parameters, templateDurationMs: 30) == nil)
+  }
 }

@@ -250,6 +250,10 @@ private struct Session: Sendable {
     continuation.yield(
       .armed(ArmedInfo(runId: runId, recipe: recipe.ref, parameters: parameters, setup: snapshot)))
 
+    guard locked.levelDbfs.isFinite else {
+      throw SoundPingError.internalFailure(
+        "nonFiniteLevel", "the locked level is not a finite dBFS value (\(locked.levelDbfs))")
+    }
     let scheduled = HitScheduler.schedule(
       parameters: parameters,
       startFrame: await backend.currentOutputFrame(),

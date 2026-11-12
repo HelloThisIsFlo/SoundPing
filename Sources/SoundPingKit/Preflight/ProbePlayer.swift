@@ -29,6 +29,10 @@ struct ProbePlayer {
   mutating func play(atLevel level: Double, using listener: inout HitListener) async throws
     -> Played
   {
+    guard level.isFinite else {
+      throw SoundPingError.internalFailure(
+        "nonFiniteLevel", "a probe was asked for at a non-finite level (\(level) dBFS)")
+    }
     let lead = Int64((HitScheduler.leadInMs / 1000 * template.sampleRate).rounded(.up))
     let hit = ScheduledHit(
       index: nextIndex, outputFrame: await backend.currentOutputFrame() + lead,

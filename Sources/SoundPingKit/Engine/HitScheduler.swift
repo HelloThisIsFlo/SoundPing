@@ -20,6 +20,13 @@ public enum HitScheduler {
         "invalidParameters", "warmup must be between 0 and 100, got \(parameters.warmup)",
         context: ["parameter": "warmup", "value": String(parameters.warmup)])
     }
+    if let level = parameters.levelDbfs {
+      guard level.isFinite, level <= 0 else {
+        throw SoundPingError.usage(
+          "invalidParameters", "level must be a finite dBFS value of 0 or below, got \(level)",
+          context: ["parameter": "level", "value": String(level)])
+      }
+    }
     let timings = [parameters.spacingMinMs, parameters.spacingMaxMs, parameters.maxLatencyMs]
     guard timings.allSatisfy({ $0.isFinite && $0 > 0 }),
       parameters.spacingMaxMs >= parameters.spacingMinMs

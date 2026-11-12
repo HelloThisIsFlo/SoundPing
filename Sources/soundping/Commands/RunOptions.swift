@@ -220,7 +220,14 @@ struct RunOptions: ParsableArguments {
     var parameters = recipe.defaultParameters(seed: seed)
     if let hits { parameters.hits = hits }
     if let warmup { parameters.warmup = warmup }
-    if let level { parameters.levelDbfs = level }
+    if let level {
+      guard level.isFinite, level <= 0 else {
+        throw SoundPingError.usage(
+          "invalidParameters", "--level must be a finite dBFS value of 0 or below, got \(level)",
+          context: ["parameter": "level", "value": String(level)])
+      }
+      parameters.levelDbfs = level
+    }
     if let template {
       guard StimulusLibrary.ids.contains(template) else {
         throw SoundPingError.usage(
