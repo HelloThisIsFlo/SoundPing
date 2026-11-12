@@ -96,6 +96,10 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// The microphone permission the simulated process holds. Denied and restricted make the
   /// capture all zeros, which is what macOS does to a real process without consent.
   public var permission: PermissionStatus
+  /// The input delivers exact zeros whatever is played, like a muted or unplugged source.
+  public var inputZeros: Bool
+  /// The output reports itself muted.
+  public var outputMuted: Bool
   public var seed: UInt64
 
   public init(
@@ -112,6 +116,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     ioOffsetFrames: Int? = nil,
     faults: [Fault] = [],
     permission: PermissionStatus = .authorized,
+    inputZeros: Bool = false,
+    outputMuted: Bool = false,
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -127,6 +133,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.ioOffsetFrames = ioOffsetFrames ?? 2 * bufferFrames + 28
     self.faults = faults
     self.permission = permission
+    self.inputZeros = inputZeros
+    self.outputMuted = outputMuted
     self.seed = seed
   }
 
@@ -147,6 +155,8 @@ public struct Scenario: Codable, Sendable, Equatable {
       try c.decodeIfPresent(Int.self, forKey: .ioOffsetFrames) ?? 2 * bufferFrames + 28
     faults = try c.decodeIfPresent([Fault].self, forKey: .faults) ?? []
     permission = try c.decodeIfPresent(PermissionStatus.self, forKey: .permission) ?? .authorized
+    inputZeros = try c.decodeIfPresent(Bool.self, forKey: .inputZeros) ?? false
+    outputMuted = try c.decodeIfPresent(Bool.self, forKey: .outputMuted) ?? false
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
@@ -471,6 +481,10 @@ public actor SimulatedBackend: AudioBackend {
   public func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
 
   public func permissionStatus() async -> PermissionStatus { scenario.permission }
+
+  public func outputMuteState() async -> MuteState {
+    MuteState(deviceMute: scenario.outputMuted, volumeScalar: 1, processMute: false)
+  }
 
   public func stop() async {
     started = false

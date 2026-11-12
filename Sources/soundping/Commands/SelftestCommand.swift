@@ -68,7 +68,7 @@ struct SelftestCommand: AsyncParsableCommand {
             switch event {
             case .armed(let info): Output.writeLine(pretty.armedLine(info))
             case .hit(let record), .rejected(let record): Output.writeLine(pretty.hitLine(record))
-            case .aborted, .selfTest, .finished: break
+            case .probe, .levelLocked, .aborted, .selfTest, .finished: break
             }
           }
           if case .finished(let result) = event { finished = result }

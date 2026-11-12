@@ -103,6 +103,8 @@ public protocol AudioBackend: AnyObject, Sendable {
   /// The microphone permission of the process that owns consent. A real backend asks the user
   /// first when they have not been asked; the simulator returns its scenario's answer.
   func permissionStatus() async -> PermissionStatus
+  /// Whether the output device, the system or this process has the output muted. Read only.
+  func outputMuteState() async -> MuteState
   var events: AsyncStream<DeviceEvent> { get }
   /// Idempotent; the coordinator calls it on every exit path.
   func stop() async
@@ -111,4 +113,6 @@ public protocol AudioBackend: AnyObject, Sendable {
 extension AudioBackend {
   /// A backend with no permission model captures freely.
   public func permissionStatus() async -> PermissionStatus { .authorized }
+  /// Nothing is known to be muted.
+  public func outputMuteState() async -> MuteState { MuteState() }
 }

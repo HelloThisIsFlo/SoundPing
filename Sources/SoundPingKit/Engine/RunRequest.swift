@@ -8,7 +8,7 @@ public struct RunParameters: Codable, Sendable, Equatable {
   public var maxLatencyMs: Double
   public var seed: UInt64
   public var templateId: String
-  /// nil = the recipe's `startLevelDbfs` until the D-14 level ramp lands.
+  /// nil = find the level with the preflight ramp (D-14); a value is confirmed with one probe.
   public var levelDbfs: Double?
   public var minValidFraction: Double
 
@@ -114,18 +114,21 @@ public struct RunRequest: Sendable {
   public var setup: ResolvedSetup
   public var label: String?
   public var tags: [String]
+  public var preflight: PreflightOptions
 
   public init(
     recipe: Recipe,
     parameters: RunParameters,
     setup: ResolvedSetup,
     label: String? = nil,
-    tags: [String] = []
+    tags: [String] = [],
+    preflight: PreflightOptions = PreflightOptions()
   ) {
     self.recipe = recipe
     self.parameters = parameters
     self.setup = setup
     self.label = label
     self.tags = tags
+    self.preflight = preflight
   }
 }
