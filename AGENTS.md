@@ -72,7 +72,7 @@ SoundPing is a source-available tool (PolyForm Shield 1.0.0) for musicians and a
 | Library | Version | Licence | Purpose | When to Use | Conf. |
 |---|---|---|---|---|---|
 | `Synchronization` (stdlib) | Swift 6 | Apache-2.0 | `Atomic<Int>` write index between IOProc and analysis | Always. The IOProc never locks or allocates | HIGH |
-| swift-log | 1.17.0 | Apache-2.0 | Structured logs (device props, per-hit diagnostics) | Always | HIGH |
+| swift-log | 1.17.0 | Apache-2.0 | Structured logs (device props, per-hit diagnostics) | **Not used yet.** Removed in Phase 1 (IN-05) because nothing used it; add it back when structured logging is actually needed | HIGH |
 | AVFoundation (`AVAudioFile`, `AVAudioApplication`) | system | — | WAV save/load of raw captures; mic permission status + request | File I/O and permission only, never the capture graph | HIGH |
 | CoreAudioKit (`CABTLEMIDIWindowController`) | system | — | In-app Bluetooth MIDI pairing window | App phase, nice-to-have. The CLI tells users to pair in Audio MIDI Setup | MEDIUM |
 | Core Audio process taps (`AudioHardwareCreateProcessTap`) | macOS 14.2+ | — | Capture the DAW's output digitally | Later differentiator. Needs its own consent (`NSAudioCaptureUsageDescription`) and an aggregate wrapper, so keep it out of milestone 1 | MEDIUM |
@@ -175,7 +175,8 @@ SoundPing is a source-available tool (PolyForm Shield 1.0.0) for musicians and a
 
 | Component | Licence | Shipped? | OK under PolyForm Shield 1.0.0? |
 |---|---|---|---|
-| swift-argument-parser, swift-log, Swift stdlib/`Synchronization` | Apache-2.0 | yes | ✅ |
+| swift-argument-parser, Swift stdlib/`Synchronization` | Apache-2.0 | yes | ✅ |
+| swift-log (not used yet, removed in Phase 1) | Apache-2.0 | no, not a dependency today | ✅ if added back |
 | Sparkle (optional) | MIT | yes | ✅ |
 | Apple frameworks (CoreAudio, CoreMIDI, Accelerate, SwiftUI, Charts, AVFoundation, CoreAudioKit) | system | linked | ✅ |
 | XcodeGen, apple-actions/import-codesign-certs, just, uv | MIT / CC0 | no (tooling) | ✅ |
