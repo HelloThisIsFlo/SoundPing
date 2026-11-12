@@ -29,6 +29,7 @@ struct HitIndexList: ExpressibleByArgument, Sendable {
 
 /// Flags for the simulated device (ENG-05). They do nothing without `--simulate`.
 /// Fault injection: `--sim-miss`, `--sim-xrun` and `--sim-gain-db` fill the matching `Scenario` fields.
+/// Clock faults: `--sim-drift-ppm` and `--sim-stamp-bias` exercise the host-clock self-test.
 struct SimulationOptions: ParsableArguments {
   @Flag(help: "Use the simulated device instead of real hardware.")
   var simulate = false
@@ -60,9 +61,24 @@ struct SimulationOptions: ParsableArguments {
   )
   var simXrun = HitIndexList([])
 
+  @Option(
+    parsing: .unconditional,
+    help:
+      "Simulated drift of the device's sample clock against the host clock, in parts per million."
+  )
+  var simDriftPpm: Double = 0
+
+  @Option(
+    parsing: .unconditional,
+    help:
+      "Simulated skew of every input host stamp, in frames. Above 2 the clock self-test must fail."
+  )
+  var simStampBias: Double = 0
+
   func scenario(seed: UInt64) -> Scenario {
     Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
-      pathGainDb: simGainDb, missedHits: simMiss.values, xrunHits: simXrun.values, seed: seed)
+      pathGainDb: simGainDb, missedHits: simMiss.values, xrunHits: simXrun.values,
+      driftPPM: simDriftPpm, stampBiasFrames: simStampBias, seed: seed)
   }
 }

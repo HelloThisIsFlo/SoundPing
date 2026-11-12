@@ -51,11 +51,18 @@ public struct BackendInfo: Sendable, Equatable {
   public var bufferFrames: Int
   /// Non-nil only for the simulated backend; recorded in run.json.
   public var simulation: Scenario?
+  /// The timebase the callback host times are in. The simulator fixes it to Apple Silicon's 125/3
+  /// so its tests give the same numbers on every machine.
+  public var hostClock: HostClock
 
-  public init(sampleRate: Double, bufferFrames: Int, simulation: Scenario? = nil) {
+  public init(
+    sampleRate: Double, bufferFrames: Int, simulation: Scenario? = nil,
+    hostClock: HostClock = .system
+  ) {
     self.sampleRate = sampleRate
     self.bufferFrames = bufferFrames
     self.simulation = simulation
+    self.hostClock = hostClock
   }
 }
 
@@ -77,6 +84,13 @@ public protocol AudioBackend: AnyObject, Sendable {
   func waitUntilCaptured(throughInputFrame: Int64) async throws
   func capture(_ range: Range<Int64>) async throws -> [Float]
   func stamps(covering range: Range<Int64>) async -> [CallbackStamp]
+  /// Every callback's timestamps so far, one entry per callback per direction. The self-test and
+  /// two-device runs build their per-direction timelines from this (CAL-03).
+  func stampLog() async -> StampLog
+  /// The HAL's own host time for an input sample (`AudioDeviceTranslateTime`), used as a diagnostic
+  /// third opinion next to our timeline. Nil when the backend has no such service; the simulator
+  /// always returns nil.
+  func halHostTime(forInputSample sample: Double) async -> UInt64?
   var events: AsyncStream<DeviceEvent> { get }
   /// Idempotent; the coordinator calls it on every exit path.
   func stop() async

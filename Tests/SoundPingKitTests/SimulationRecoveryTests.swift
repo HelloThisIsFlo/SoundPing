@@ -28,6 +28,9 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
     await inner.stamps(covering: range)
   }
 
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+
   func waitUntilCaptured(throughInputFrame: Int64) async throws {
     waits += 1
     if waits == 1 {

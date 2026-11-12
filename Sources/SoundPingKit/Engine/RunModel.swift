@@ -111,6 +111,15 @@ public struct Measured: Codable, Sendable, Equatable {
     self.appRoundTrip = appRoundTrip
     self.ioOffset = ioOffset
   }
+
+  /// The statistics of the number this run leads with.
+  public var headlineStats: SummaryStats? {
+    switch headline {
+    case .path: return path
+    case .appRoundTrip: return appRoundTrip
+    case .ioOffset: return ioOffset
+    }
+  }
 }
 
 public struct Segment: Codable, Sendable, Equatable {
@@ -212,6 +221,10 @@ public struct RunResult: Codable, Sendable, Equatable {
   /// Always encoded, `[]` in Phase 1 (ENG-06).
   public var corrections: [Correction]
   public var simulation: Scenario?
+  /// The host-clock self-test of a same-device run (CAL-03, D-05); nil for two-device runs.
+  public var selfTest: ClockSelfTestResult?
+  /// The timebase the host times of this run were converted with.
+  public var hostTimebase: HostTimebase?
 
   public init(
     schemaVersion: Int = RunResult.currentSchemaVersion,
@@ -231,7 +244,9 @@ public struct RunResult: Codable, Sendable, Equatable {
     rejectedCounts: [String: Int],
     segments: [Segment],
     corrections: [Correction],
-    simulation: Scenario?
+    simulation: Scenario?,
+    selfTest: ClockSelfTestResult? = nil,
+    hostTimebase: HostTimebase? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.runId = runId
@@ -251,6 +266,8 @@ public struct RunResult: Codable, Sendable, Equatable {
     self.segments = segments
     self.corrections = corrections
     self.simulation = simulation
+    self.selfTest = selfTest
+    self.hostTimebase = hostTimebase
   }
 }
 
@@ -274,6 +291,8 @@ public enum RunEvent: Sendable, Equatable {
   case hit(HitRecord)
   case rejected(HitRecord)
   case aborted(SoundPingError)
+  /// The host-clock self-test, emitted after the last hit of a same-device run and before `finished`.
+  case selfTest(ClockSelfTestResult)
   case finished(RunResult)
 }
 
@@ -295,6 +314,9 @@ extension RunEvent: Codable {
     case .aborted(let error):
       try container.encode("aborted", forKey: .type)
       try error.encode(to: encoder)
+    case .selfTest(let result):
+      try container.encode("selfTest", forKey: .type)
+      try result.encode(to: encoder)
     case .finished(let result):
       try container.encode("finished", forKey: .type)
       try container.encode(result, forKey: .result)
@@ -309,6 +331,7 @@ extension RunEvent: Codable {
     case "hit": self = .hit(try HitRecord(from: decoder))
     case "rejected": self = .rejected(try HitRecord(from: decoder))
     case "aborted": self = .aborted(try SoundPingError(from: decoder))
+    case "selfTest": self = .selfTest(try ClockSelfTestResult(from: decoder))
     case "finished": self = .finished(try container.decode(RunResult.self, forKey: .result))
     default:
       throw DecodingError.dataCorruptedError(

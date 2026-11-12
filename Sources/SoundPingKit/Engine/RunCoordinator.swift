@@ -58,6 +58,8 @@ private struct Session: Sendable {
     let parameters = request.parameters
     let nominal = try StimulusLibrary.template(id: parameters.templateId, sampleRate: 48_000)
     try HitScheduler.validate(parameters, templateDurationMs: nominal.durationMs)
+    // A store file this build cannot read fails the run now, before any audio, not after it (T-01-21).
+    _ = try ClockSelfTestStore.load(from: store.paths.clockSelfTest)
 
     let result: RunResult
     do {
@@ -130,6 +132,29 @@ private struct Session: Sendable {
   private func measure(info: BackendInfo, nominal: StimulusTemplate, monitor: FaultMonitor)
     async throws -> RunResult
   {
+    // The folder exists before `armed` is announced, so the run id on the stream is the final one,
+    // collision suffix included. A run that dies before run.json is written takes its empty folder along.
+    let createdAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+    let folder = try store.createRunFolder(
+      recipeId: request.recipe.id, label: request.label, createdAt: createdAt)
+    do {
+      return try await measure(
+        info: info, nominal: nominal, monitor: monitor, folder: folder, createdAt: createdAt)
+    } catch {
+      Self.removeIfEmpty(folder)
+      throw error
+    }
+  }
+
+  private static func removeIfEmpty(_ folder: URL) {
+    let entries = try? FileManager.default.contentsOfDirectory(atPath: folder.path)
+    if entries?.isEmpty == true { try? FileManager.default.removeItem(at: folder) }
+  }
+
+  private func measure(
+    info: BackendInfo, nominal: StimulusTemplate, monitor: FaultMonitor, folder: URL,
+    createdAt: Date
+  ) async throws -> RunResult {
     let parameters = request.parameters
     let recipe = request.recipe
     let sampleRate = info.sampleRate
@@ -137,8 +162,7 @@ private struct Session: Sendable {
     let templateFrames = Int64(template.samples.count)
     let maxLatencyFrames = Int64((parameters.maxLatencyMs / 1000 * sampleRate).rounded(.up))
 
-    let createdAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-    let runId = RunStore.folderName(recipeId: recipe.id, label: request.label, createdAt: createdAt)
+    let runId = folder.lastPathComponent
     let snapshot = SetupSnapshot(
       setup: request.setup, sampleRate: sampleRate, bufferFrames: info.bufferFrames,
       simulated: info.simulation != nil)
@@ -193,15 +217,16 @@ private struct Session: Sendable {
       records.append(record)
     }
 
-    return try finish(
-      records: records, info: info, snapshot: snapshot, runId: runId, createdAt: createdAt)
+    return try await finish(
+      records: records, info: info, snapshot: snapshot, folder: folder, createdAt: createdAt)
   }
 
   /// Warm-ups stay in hits[] but never enter a statistic (D-04).
   private func finish(
-    records: [HitRecord], info: BackendInfo, snapshot: SetupSnapshot, runId: String,
+    records: [HitRecord], info: BackendInfo, snapshot: SetupSnapshot, folder: URL,
     createdAt: Date
-  ) throws -> RunResult {
+  ) async throws -> RunResult {
+    let runId = folder.lastPathComponent
     let measured = records.filter { $0.phase == .measure }
     let latencies = measured.compactMap { $0.rejection == nil ? $0.latencyFrames : nil }
     let stats = Stats.summarize(latencies: latencies, n: measured.count, sampleRate: info.sampleRate)
@@ -210,6 +235,29 @@ private struct Session: Sendable {
       uniqueKeysWithValues: RejectionReason.allCases.map { ($0.rawValue, 0) })
     for record in measured {
       if let reason = record.rejection { rejectedCounts[reason.rawValue, default: 0] += 1 }
+    }
+
+    // A same-device run proves its own clock before it reports (CAL-03, D-05).
+    var selfTest: ClockSelfTestResult?
+    var hostTimebase: HostTimebase?
+    if request.setup.output.uid == request.setup.input.uid {
+      let log = await backend.stampLog()
+      if !log.isEmpty {
+        var halTimes: [Int: UInt64] = [:]
+        for hit in measured where hit.rejection == nil {
+          guard let path = hit.latencyFrames else { continue }
+          let sample = Double(hit.outputFrame) + path
+          if let host = await backend.halHostTime(forInputSample: sample) {
+            halTimes[hit.index] = host
+          }
+        }
+        let evaluated = ClockSelfTest.evaluate(
+          hits: records, stampLog: log, sampleRate: info.sampleRate, hostClock: info.hostClock,
+          halInputHostTimes: halTimes)
+        selfTest = evaluated
+        hostTimebase = info.hostClock.timebase
+        continuation.yield(.selfTest(evaluated))
+      }
     }
 
     var result = RunResult(
@@ -229,12 +277,19 @@ private struct Session: Sendable {
       rejectedCounts: rejectedCounts,
       segments: request.recipe.segments,
       corrections: [],
-      simulation: info.simulation)
+      simulation: info.simulation,
+      selfTest: selfTest,
+      hostTimebase: hostTimebase)
 
-    let folder = try store.createRunFolder(
-      recipeId: request.recipe.id, label: request.label, createdAt: createdAt)
-    result.runId = folder.lastPathComponent
     result.runPath = folder.path
+    if let selfTest {
+      let key = ClockSelfTestKey(
+        deviceUID: request.setup.output.uid, sampleRate: info.sampleRate,
+        bufferFrames: info.bufferFrames)
+      try ClockSelfTestStore.record(
+        ClockSelfTestEntry(key: key, result: selfTest, runId: runId, measuredAt: createdAt),
+        in: store.paths.clockSelfTest)
+    }
     try store.write(result, to: folder)
     return result
   }

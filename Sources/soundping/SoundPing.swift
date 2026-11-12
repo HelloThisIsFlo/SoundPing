@@ -9,7 +9,7 @@ struct SoundPing: AsyncParsableCommand {
     version: SoundPingInfo.version,
     subcommands: [
       RunCommand.self, RunsCommand.self, DevicesCommand.self, RecipesCommand.self,
-      PathsCommand.self,
+      PathsCommand.self, SelftestCommand.self,
     ]
   )
 }

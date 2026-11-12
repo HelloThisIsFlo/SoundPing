@@ -46,6 +46,12 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// Global hit indices during which the input drops `SimulatedBackend.xrunFrames` frames: the
   /// capture holds zeros there and the callback stamps jump, as after a real HAL glitch.
   public var xrunHits: [Int]
+  /// How far the device's sample clock runs fast against the host clock, in parts per million.
+  /// It shows up in the callbacks' `rateScalar` and in the host stamps, never in the labels.
+  public var driftPPM: Double
+  /// Shifts every input-direction host stamp by this many frames, as a driver that stamps its
+  /// input late would. The clock self-test must fail when it exceeds its 2 frame limit.
+  public var stampBiasFrames: Double
   public var seed: UInt64
 
   public init(
@@ -57,6 +63,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     bufferFrames: Int = 128,
     missedHits: [Int] = [],
     xrunHits: [Int] = [],
+    driftPPM: Double = 0,
+    stampBiasFrames: Double = 0,
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -67,6 +75,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.bufferFrames = bufferFrames
     self.missedHits = missedHits
     self.xrunHits = xrunHits
+    self.driftPPM = driftPPM
+    self.stampBiasFrames = stampBiasFrames
     self.seed = seed
   }
 
@@ -81,6 +91,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     bufferFrames = try c.decode(Int.self, forKey: .bufferFrames)
     missedHits = try c.decodeIfPresent([Int].self, forKey: .missedHits) ?? []
     xrunHits = try c.decodeIfPresent([Int].self, forKey: .xrunHits) ?? []
+    driftPPM = try c.decodeIfPresent(Double.self, forKey: .driftPPM) ?? 0
+    stampBiasFrames = try c.decodeIfPresent(Double.self, forKey: .stampBiasFrames) ?? 0
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
@@ -114,8 +126,10 @@ public actor SimulatedBackend: AudioBackend {
   public static let xrunFrames: Int64 = 64
 
   // mach_timebase_info on Apple Silicon: nanoseconds = ticks * 125 / 3.
-  private static let timebaseNumer = 125.0
-  private static let timebaseDenom = 3.0
+  public static let hostClock = HostClock(numer: 125, denom: 3)
+  /// Where the virtual host clock starts, far enough from zero that tick values behave like a
+  /// machine that has been up for weeks.
+  private static let hostEpochTicks: UInt64 = 1 << 42
 
   public init(scenario: Scenario) {
     self.scenario = scenario
@@ -133,7 +147,8 @@ public actor SimulatedBackend: AudioBackend {
     }
     self.templates = regenerated
     return BackendInfo(
-      sampleRate: scenario.sampleRate, bufferFrames: scenario.bufferFrames, simulation: scenario)
+      sampleRate: scenario.sampleRate, bufferFrames: scenario.bufferFrames, simulation: scenario,
+      hostClock: Self.hostClock)
   }
 
   public func start() async throws {
@@ -250,16 +265,60 @@ public actor SimulatedBackend: AudioBackend {
     guard firstBuffer <= lastBuffer else { return [] }
     return (firstBuffer...lastBuffer).map { index in
       let frame = index * buffer
-      let nanoseconds = Double(frame) / scenario.sampleRate * 1e9
-      let ticks = UInt64((nanoseconds * Self.timebaseDenom / Self.timebaseNumer).rounded())
       // After an xrun the device clock has run on: sample time jumps ahead of the frame count.
       let lost = Int64(xrunGaps.filter { $0 <= frame }.count) * Self.xrunFrames
-      return CallbackStamp(
-        inputSampleTime: Double(frame + lost), inputHostTime: ticks, inputRateScalar: 1,
-        outputSampleTime: Double(frame), outputHostTime: ticks, outputRateScalar: 1,
-        frames: scenario.bufferFrames)
+      var stamp = callbackStamp(index: index)
+      stamp.inputSampleTime = Double(frame + lost)
+      return stamp
     }
   }
+
+  public func stampLog() async -> StampLog {
+    let buffer = Int64(scenario.bufferFrames)
+    let callbacks = Int(framesProcessed / buffer)
+    var log = StampLog()
+    log.input.reserveCapacity(callbacks)
+    log.output.reserveCapacity(callbacks)
+    for index in 0..<callbacks {
+      let stamp = callbackStamp(index: Int64(index))
+      log.input.append(
+        TimelinePoint(
+          sampleTime: stamp.inputSampleTime, hostTime: stamp.inputHostTime,
+          rateScalar: stamp.inputRateScalar, frames: stamp.frames))
+      log.output.append(
+        TimelinePoint(
+          sampleTime: stamp.outputSampleTime, hostTime: stamp.outputHostTime,
+          rateScalar: stamp.outputRateScalar, frames: stamp.frames))
+    }
+    return log
+  }
+
+  public func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+
+  /// The callback with this index, stamped from one virtual host clock. The label of a frame maps
+  /// to host time through the device's clock rate (drifted by `driftPPM`), so input and output
+  /// stamps of the same device agree unless `stampBiasFrames` skews the input ones.
+  private func callbackStamp(index: Int64) -> CallbackStamp {
+    let frame = Double(index * Int64(scenario.bufferFrames))
+    let host = hostTicks(forLabel: frame)
+    let bias = Self.hostClock.ticks(
+      forFrames: scenario.stampBiasFrames, sampleRate: scenario.sampleRate)
+    let inputHost = UInt64(Swift.max(0, (Double(host) + bias).rounded()))
+    return CallbackStamp(
+      inputSampleTime: frame, inputHostTime: inputHost, inputRateScalar: rateScalar,
+      outputSampleTime: frame, outputHostTime: host, outputRateScalar: rateScalar,
+      frames: scenario.bufferFrames)
+  }
+
+  /// Host ticks at which the device's clock reads `label`.
+  private func hostTicks(forLabel label: Double) -> UInt64 {
+    let seconds = label / (scenario.sampleRate * (1 + scenario.driftPPM * 1e-6))
+    return Self.hostEpochTicks + Self.hostClock.nanosToWholeTicks(seconds * 1e9)
+  }
+
+  /// Apple's definition: actual host ticks per frame over the nominal ones. A clock that runs
+  /// fast spends fewer ticks per frame.
+  private var rateScalar: Double { 1 / (1 + scenario.driftPPM * 1e-6) }
 
   public func stop() async {
     started = false

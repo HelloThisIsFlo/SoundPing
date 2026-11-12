@@ -80,11 +80,21 @@ struct PrettyRenderer {
       lines.append("no valid hits: nothing to report")
     }
 
+    if let selfTest = result.selfTest { lines.append(selfTestLine(selfTest)) }
+
     let path = result.segments.map { Self.shortName(of: $0) }.joined(separator: " → ")
     lines.append("Segments: \(path)")
     lines.append(corrections(result.corrections))
     lines.append("Saved: \(result.runPath)")
     return lines.joined(separator: "\n")
+  }
+
+  /// "Clock self-test: PASS (median Δ 0.02, p95 |Δ| 0.05 frames)": does the host clock agree with
+  /// the sample clock (CAL-03).
+  func selfTestLine(_ selfTest: ClockSelfTestResult) -> String {
+    String(
+      format: "Clock self-test: %@ (median Δ %.2f, p95 |Δ| %.2f frames)",
+      selfTest.pass ? "PASS" : "FAIL", selfTest.medianDeltaFrames, selfTest.p95AbsDeltaFrames)
   }
 
   private func statLine(_ label: String, _ value: StatValue?, note: String? = nil) -> String {
