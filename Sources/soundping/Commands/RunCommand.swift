@@ -72,6 +72,8 @@ struct RunCommand: AsyncParsableCommand {
   /// to keep it. No run folder, no hits. JSON modes never prompt.
   private func probeChannels(backend: any AudioBackend, setup: ResolvedSetup) async throws {
     let channels = try options.inputChannels(of: setup, simulated: simulation.simulate)
+    // Without --template the probe picks the chirp band from the listener, like a run
+    // (`PreflightOptions.templateFollowsListener`); this default is only validated here.
     let templateId = options.template ?? "chirp-loopback"
     guard StimulusLibrary.ids.contains(templateId) else {
       throw SoundPingError.usage(

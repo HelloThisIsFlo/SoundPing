@@ -10,6 +10,7 @@ import Testing
 private final class LoudestPlayedBackend: AudioBackend {
   private let inner: SimulatedBackend
   private let loudestGain = Mutex<Float>(0)
+  private let scheduledTemplates = Mutex<Set<String>>([])
   let events: AsyncStream<DeviceEvent>
 
   init(scenario: Scenario) {
@@ -23,6 +24,9 @@ private final class LoudestPlayedBackend: AudioBackend {
     return gain > 0 ? 20 * log10(Double(gain)) : nil
   }
 
+  /// Every template a scheduled sound used.
+  var templatesPlayed: Set<String> { scheduledTemplates.withLock { $0 } }
+
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
     try await inner.open(setup, templates: templates)
   }
@@ -32,6 +36,7 @@ private final class LoudestPlayedBackend: AudioBackend {
   func schedule(_ hits: [ScheduledHit]) async throws {
     let loudest = hits.map(\.gain).max() ?? 0
     loudestGain.withLock { $0 = Swift.max($0, loudest) }
+    scheduledTemplates.withLock { $0.formUnion(hits.map(\.templateId)) }
     try await inner.schedule(hits)
   }
   func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
@@ -507,6 +512,33 @@ private final class LoudestPlayedBackend: AudioBackend {
     var testDescription: String { rawValue }
     var device: DeviceInfo {
       self == .scarlett ? SimulatedCatalog.scarlett : SimulatedCatalog.duplex
+    }
+  }
+
+  /// The probe picks its chirp band like a run: from the listener when no `--template` is named,
+  /// and the named template otherwise.
+  @Test func theChannelProbeChirpBandFollowsTheListenerLikeARun() async throws {
+    let device = SimulatedCatalog.duplex
+    let setup = ResolvedSetup(
+      output: try #require(SimulatedOutput.allCases.first).ref, input: device.ref,
+      outChannels: [1, 2], inChannel: 0, autoInChannel: true)
+    let cases: [(ListenerKind, Bool, String)] = [
+      (.speaker, true, "chirp-speaker"),
+      (.headphones, true, "chirp-speaker"),
+      (.loopback, true, "chirp-loopback"),
+      (.speaker, false, "chirp-loopback"),
+    ]
+    for (listener, follows, expected) in cases {
+      let backend = LoudestPlayedBackend(
+        scenario: Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 1, seed: 3))
+      _ = try? await ChannelProbe().run(
+        backend: backend, setup: setup,
+        channels: Array((device.input?.channels ?? []).prefix(2)),
+        options: PreflightOptions(listener: listener, templateFollowsListener: follows),
+        templateId: "chirp-loopback")
+      #expect(
+        backend.templatesPlayed == [expected],
+        "--listener \(listener.rawValue), follows \(follows): played \(backend.templatesPlayed)")
     }
   }
 

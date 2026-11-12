@@ -86,7 +86,9 @@ public struct ChannelProbe: Sendable {
   /// `setup` names the devices; `inChannel` is ignored and replaced by each of `channels` in turn.
   /// The probe plays under the run's loudness rule (`LevelRamp.runLoudness`, written down at
   /// `LevelRamp.loudness`): the output alone sets the ceiling, `--listener` can only lower it, and
-  /// `--max-level` replaces it (T-01-28).
+  /// `--max-level` replaces it (T-01-28). The chirp band follows the run's rule too: with
+  /// `options.templateFollowsListener` (no `--template`) it comes from the listener the loudness
+  /// reports (`LevelRamp.templateId(for:)`); otherwise `templateId` is played.
   public func run(
     backend: any AudioBackend, setup: ResolvedSetup, channels: [ChannelInfo],
     options: PreflightOptions = PreflightOptions(), templateId: String = "chirp-loopback"
@@ -106,7 +108,15 @@ public struct ChannelProbe: Sendable {
     // The loudness decided at the first open, and the output route (data source and jack state)
     // it was decided with.
     var decided: (loudness: LevelRamp.Loudness, dataSource: String?, jack: String?)?
-    let nominal = try StimulusLibrary.template(id: templateId, sampleRate: 48_000)
+    // Both chirp bands are opened when the listener picks the band, as a run does, because the
+    // listener is only known once the devices are open.
+    var templateIds = [templateId]
+    if options.templateFollowsListener {
+      for id in ["chirp-loopback", "chirp-speaker"] where !templateIds.contains(id) {
+        templateIds.append(id)
+      }
+    }
+    let nominals = try templateIds.map { try StimulusLibrary.template(id: $0, sampleRate: 48_000) }
     let checks = Preflight(resolver: resolver)
 
     var scores: [ChannelScore] = []
@@ -119,7 +129,7 @@ public struct ChannelProbe: Sendable {
       channelSetup.inChannelName = channel.name
       channelSetup.autoInChannel = false
 
-      let info = try await backend.open(channelSetup, templates: [nominal])
+      let info = try await backend.open(channelSetup, templates: nominals)
       let opened = channelSetup
       // The output device is the same for every channel, so its loudness is decided at the first
       // open, before the first sound (CR-02): headphones keep their -30 dBFS ceiling during the
@@ -153,6 +163,13 @@ public struct ChannelProbe: Sendable {
         decided = (loudness, dataSource, jack)
       }
       let probeCeiling = loudness.ceilingDbfs
+      let playedId =
+        options.templateFollowsListener ? LevelRamp.templateId(for: loudness.kind) : templateId
+      guard let nominal = nominals.first(where: { $0.id == playedId }) else {
+        await backend.stop()
+        throw SoundPingError.internalFailure(
+          "unknownTemplate", "the template '\(playedId)' was never opened")
+      }
       do {
         if position == 0 {
           app = try await checks.checkPermission(on: backend).app
