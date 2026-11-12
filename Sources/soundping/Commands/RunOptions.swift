@@ -26,14 +26,31 @@ struct RunOptions: ParsableArguments {
   )
   var store: String?
 
+  @Option(help: "A label for this run, stored verbatim and used in the run folder name.")
+  var label: String?
+
+  @Option(
+    name: .customLong("tag"),
+    help: "A tag for this run. Repeat the flag for several; duplicates are dropped.")
+  var tags: [String] = []
+
+  /// Tags without duplicates, first-seen order kept.
+  var uniqueTags: [String] {
+    var seen = Set<String>()
+    return tags.filter { seen.insert($0).inserted }
+  }
+
   /// Draws the random seed once, after parsing, so the request and the simulator share it.
   mutating func pinSeed() {
     if seed == nil { seed = UInt64.random(in: 0..<(1 << 53)) }
   }
 
+  /// The store for a run. It holds `<root>/.run.lock` for as long as the store (or a copy of it,
+  /// such as the coordinator's) is alive, so a second run fails fast with `runInProgress` (T-01-06).
   func makeStore() throws -> RunStore {
-    RunStore(
-      paths: try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment))
+    try RunStore(
+      paths: try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment)
+    ).acquiringRunLock()
   }
 
   /// The device side of the run. Hardware arrives with the HAL backend; until then only the
@@ -69,6 +86,7 @@ struct RunOptions: ParsableArguments {
       }
       parameters.templateId = template
     }
-    return RunRequest(recipe: recipe, parameters: parameters, setup: setup)
+    return RunRequest(
+      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags)
   }
 }
