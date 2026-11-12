@@ -1,8 +1,8 @@
 ---
 phase: 01-audio-round-trip
-fixed_at: 2026-11-12T21:06:20Z
+fixed_at: 2026-11-12T21:26:39Z
 review_path: .planning/phases/01-audio-round-trip/01-REVIEW.md
-iteration: 5
+iteration: 6
 findings_in_scope: 4
 fixed: 4
 skipped: 0
@@ -11,9 +11,9 @@ status: all_fixed
 
 # Phase 01: Code Review Fix Report
 
-**Fixed at:** 2026-11-12T21:06:20Z
+**Fixed at:** 2026-11-12T21:26:39Z
 **Source review:** .planning/phases/01-audio-round-trip/01-REVIEW.md
-**Iteration:** 5
+**Iteration:** 6 (follow-ups only; the finding counts are iteration 5's)
 
 **Summary (iteration 5, against the fourth review, the second regression pass):**
 - Findings in scope: 4 (1 critical, 2 warning, 1 info; `fix_scope: all`, the maintainer listed all four)
@@ -29,7 +29,7 @@ status: all_fixed
 - **There is no automatic loopback/-6 ceiling any more**, for any input or output combination. The input never changes the ceiling.
 - **`--listener`** describes the setup: the listener the run reports and, without `--template`, the chirp band. It can lower the ceiling (headphones -30, speaker -12, unknown -18; loopback lowers nothing), never raise it.
 - **`--max-level`** is the only way to a louder probe (it replaces the ceiling). **`--level`** stays clamped to the ceiling.
-- **The `--in-channel auto` probe** follows the same output rule, capped at -18 as before (so the built-in speakers probe at -18, not -12).
+- **The `--in-channel auto` probe** follows exactly the same rule (iteration 6; in iteration 5 it was capped at -18, so the built-in speakers probed at -18).
 - **Why:** the ramp starts at -48 dBFS and stops at the first clearly heard probe, so a real loop locks far below -18. The -6 exception bought nothing and caused every safety regression (CR-02 to CR-05). A loop that genuinely needs more uses `--max-level`.
 - Written down once at `LevelRamp.loudness`, mirrored in the `--listener`, `--max-level` and `--level` help, the `nothingHeardAtCeiling` detail and hint, and the README "Test-sound loudness" section.
 
@@ -82,6 +82,14 @@ status: all_fixed
 - **Hardware:** `just hw-test` and `just bench` were NOT run and no sound was played. Everything that needs a real loop is marked "requires human verification" below.
 
 ## Fixed Issues
+
+**Iteration 6 (follow-ups from the iteration 5 questions)**
+- Maintainer answer: "keep things consistent and easy to maintain". Not REVIEW.md findings, so the counts above are unchanged.
+- `8650265` **The channel probe plays under the run's loudness rule.** `ChannelProbe` calls `LevelRamp.runLoudness` (with the setup before its channel is known), so the built-in speakers probe at -12 like a run. `probeLoudness`, the -18 cap (`capDbfs`, `probeCapped`) and the "channel probe's limit" wording are gone. `LoudnessInvariantTests` expects the rule's literal ceilings on the probe path and checks that a deaf probe reaches them (a reintroduced -18 cap fails it). No help or README text said the probe differed.
+- `2c953d1` **A loop label only for a loop on one device.** `classify` drops the two-virtual-devices case: a `Loop`-named channel or a virtual input on the output's own device is a loop; two separate virtual devices are the ordinary listener (speaker chirp band, no "check the loop routing" hint). Loudness unchanged. The invariant suite now pins the loop label for every output × input kind; `LevelRampTests` expects `unknown` for two virtual devices (a reintroduced rule fails both).
+- `188959b` **The headphone-jack baseline is carried across probe reopens.** Status: fixed: requires human verification (a real jack change between two probed channels). `BackendInfo.outputJack` holds the output's `'jack'` state read at open (HAL; the simulator has none). The probe keeps the first open's jack next to its data source and ends with `outputRouteChanged` (`property: jackIsConnected`) when a reopen differs, even on the same data source. New simulator test fails without the fix (checked).
+- `85ab502` **Planning docs.** `01-UAT.md` and `01-VERIFICATION.md` state the output-only ceilings instead of "loopback -6"; new UAT item 8: the Scarlett `Loop 1` round trip locks at or below -18 dBFS without `--max-level` (`just hw-test`).
+- **Verification:** isolated worktree (`.claude/worktrees/rf-01-63450-1794518155`, branch `gsd-reviewfix/01-63450`), `swift build`, `swift test` and `scripts/ci-sim.sh` before every code commit; main had not moved (base `0dd1103`), fast-forwarded, hashes final. Then once more in the main checkout: 320 kit tests, 44 CLI tests, `ci-sim: OK`. No IOProc code touched. Hardware not run, no sound played.
 
 **Iteration 5**
 
@@ -517,4 +525,4 @@ None.
 
 _Fixed: 2026-11-12T21:06:20Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 5_
+_Iteration: 6_
