@@ -110,6 +110,10 @@ public struct LevelRamp: Sendable {
     return maxLevelDbfs
   }
 
+  /// What `templateId(for:)` does, in words, for `soundping recipes`.
+  public static let templateRule =
+    "follows the listener unless --template is given (chirp-loopback for a loop, chirp-speaker otherwise)"
+
   /// The chirp band follows the listener (D-12): full range for a cable, the speaker band otherwise.
   public static func templateId(for kind: ListenerKind) -> String {
     kind == .loopback ? "chirp-loopback" : "chirp-speaker"
