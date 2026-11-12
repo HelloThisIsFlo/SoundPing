@@ -5,19 +5,19 @@ titles: json
 findings:
   - id: CR-05
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "Two unrelated virtual devices count as \"a loop SoundPing can see\": a monitored virtual output can ramp to -6 dBFS into headphones"
   - id: WR-15
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "The channel probe keeps the first channel's ceiling but re-baselines route watching on every reopen, so a route change between channels is never reported"
   - id: WR-16
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "A `--level` above the ceiling that hears nothing reports the requested level, not the clamped level that was played"
   - id: IN-22
     severity: info
-    disposition: open
+    disposition: fixed
     title: "The loudness invariant cannot catch a drift in the transport strings the classifier keys on"
   - id: CR-04
     severity: critical
@@ -175,19 +175,19 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-open: 4
+open: 0
 total: 43
-recorded: 2026-11-12T20:43:25.911Z
+recorded: 2026-11-12T21:07:42.978Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-05 | critical | open | - |
-| WR-15 | warning | open | - |
-| WR-16 | warning | open | - |
-| IN-22 | info | open | - |
+| CR-05 | critical | fixed | 01-REVIEW-FIX.md |
+| WR-15 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-16 | warning | fixed | 01-REVIEW-FIX.md |
+| IN-22 | info | fixed | 01-REVIEW-FIX.md |
 | CR-04 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-13 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-14 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
