@@ -34,6 +34,45 @@ struct RunOptions: ParsableArguments {
     help: "A tag for this run. Repeat the flag for several; duplicates are dropped.")
   var tags: [String] = []
 
+  @Option(
+    help:
+      "A saved setup (see --save-setup). Any device flag below overrides the matching field of the setup."
+  )
+  var setup: String?
+
+  @Option(
+    help:
+      "Output device: its UID, its name, or part of its name. `default` uses the system default on purpose. Required for hardware runs."
+  )
+  var output: String?
+
+  @Option(
+    help:
+      "Input device: its UID, its name, or part of its name. `default` uses the system default on purpose. Required for hardware runs."
+  )
+  var input: String?
+
+  @Option(
+    help:
+      "Input channel, 1-based, as `soundping devices` lists it. Required for hardware runs; never guessed."
+  )
+  var inChannel: String?
+
+  @Option(
+    help: "Output channels, 1-based, comma-separated, e.g. 1,2. Default: the device's stereo pair."
+  )
+  var outChannels: String?
+
+  @Option(
+    parsing: .unconditional,
+    help:
+      "MIDI destination: its unique ID (may be negative, e.g. -823739469) or its name."
+  )
+  var midiOut: String?
+
+  @Option(help: "Save the resolved devices and channels under this name in setups.json.")
+  var saveSetup: String?
+
   /// Tags without duplicates, first-seen order kept.
   var uniqueTags: [String] {
     var seen = Set<String>()
@@ -53,11 +92,13 @@ struct RunOptions: ParsableArguments {
     ).acquiringRunLock()
   }
 
-  /// The device side of the run. Hardware arrives with the HAL backend; until then only the
-  /// simulator is available.
+  /// The device side of the run. Selectors are resolved first, so a bad device or channel is
+  /// reported before anything else; hardware itself arrives with the HAL backend, until then only
+  /// the simulator is available.
   func makeBackend(simulation: SimulationOptions) throws -> (
     backend: any AudioBackend, setup: ResolvedSetup
   ) {
+    let setup = try resolveSetup(simulated: simulation.simulate)
     guard simulation.simulate else {
       throw SoundPingError.usage(
         "hardwareBackendUnavailable",
@@ -66,7 +107,51 @@ struct RunOptions: ParsableArguments {
     guard let seed else {
       throw SoundPingError.internalFailure("seedNotPinned", "the run seed was never drawn")
     }
-    return (SimulatedBackend(scenario: simulation.scenario(seed: seed)), .simulatedDuplex)
+    return (SimulatedBackend(scenario: simulation.scenario(seed: seed)), setup)
+  }
+
+  /// Turns the device flags and `--setup` into a `ResolvedSetup`, prints each warning to stderr
+  /// and writes `--save-setup`. Reads the device list from the simulator or the HAL (D-08..D-11).
+  func resolveSetup(simulated: Bool) throws -> ResolvedSetup {
+    let paths = try StorePaths.resolve(
+      flag: store, environment: ProcessInfo.processInfo.environment)
+    let catalog: any DeviceCatalog = simulated ? SimulatedCatalog() : HALDeviceCatalog()
+    let saved = (setup != nil || saveSetup != nil) ? try Setups.load(from: paths.setups) : nil
+
+    let resolved = try SetupResolver(
+      listing: try catalog.listing(), setups: saved, simulated: simulated
+    )
+    .resolve(
+      SetupSelectors(
+        setup: setup, output: output, input: input, inChannel: inChannel,
+        outChannels: try parsedOutChannels(), midiOut: midiOut, saveSetup: saveSetup))
+
+    for warning in resolved.warnings {
+      FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+    }
+
+    if let name = saveSetup {
+      guard !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+        throw SoundPingError.usage("invalidSetupName", "--save-setup needs a non-empty name")
+      }
+      var file = saved ?? SetupsFile()
+      file.setups[name] = SetupBinding(resolved: resolved)
+      try Setups.save(file, to: paths.setups)
+    }
+    return resolved
+  }
+
+  private func parsedOutChannels() throws -> [Int]? {
+    guard let outChannels else { return nil }
+    let pieces = outChannels.split(separator: ",", omittingEmptySubsequences: false)
+    let values = pieces.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    guard values.count == pieces.count, !values.isEmpty else {
+      throw SoundPingError.usage(
+        "invalidChannel",
+        "--out-channels takes comma-separated channel numbers such as 1,2; got '\(outChannels)'",
+        context: ["value": outChannels])
+    }
+    return values
   }
 
   func makeRequest(recipe: Recipe, setup: ResolvedSetup) throws -> RunRequest {
