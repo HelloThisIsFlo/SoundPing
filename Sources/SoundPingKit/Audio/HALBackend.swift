@@ -45,6 +45,7 @@ public final class HALBackend: AudioBackend {
     var gapsReported = 0
     var stallReported = false
     var stopped = false
+    var listeners: DeviceListeners?
   }
 
   public init() {
@@ -147,8 +148,18 @@ public final class HALBackend: AudioBackend {
       throw error
     }
 
+    // Listening starts once the buffer sizes are settled, so SoundPing's own change is not news.
+    var watched = [
+      DeviceListeners.Watched(id: outID, uid: outInfo.uid, bufferFrames: outBuffer)
+    ]
+    if inID != outID {
+      watched.append(DeviceListeners.Watched(id: inID, uid: inInfo.uid, bufferFrames: inBuffer))
+    }
+    let listeners = DeviceListeners(watching: watched, rate: rate, rt: rt, sink: eventSink)
+
     state.withLock {
       $0.rt = rt
+      $0.listeners = listeners
       $0.devices = devices
       $0.templateIndex = index
       $0.outputUID = outInfo.uid
@@ -438,13 +449,15 @@ public final class HALBackend: AudioBackend {
   // MARK: Stopping
 
   public func stop() async {
-    let devices = state.withLock { state -> [OpenDevice] in
-      guard !state.stopped else { return [] }
+    let (devices, listeners) = state.withLock { state -> ([OpenDevice], DeviceListeners?) in
+      guard !state.stopped else { return ([], nil) }
       state.stopped = true
-      let taken = state.devices
+      let taken = (state.devices, state.listeners)
       state.devices = []
+      state.listeners = nil
       return taken
     }
+    listeners?.remove()
     Self.destroy(devices)
     eventSink.finish()
   }

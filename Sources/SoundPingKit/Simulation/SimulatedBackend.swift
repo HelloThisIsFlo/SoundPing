@@ -51,7 +51,16 @@ public struct Fault: Codable, Sendable, Equatable {
 
   /// `<kind>@<hit>`, e.g. `sampleRateChange@30`. Anything else is a usage error.
   public static func parse(_ spec: String) throws -> Fault {
-    throw SoundPingError.internalFailure("notImplemented", "fault parsing: \(spec)")
+    let parts = spec.split(separator: "@", omittingEmptySubsequences: false)
+    guard parts.count == 2, let kind = Kind(rawValue: String(parts[0])),
+      let hit = Int(parts[1].trimmingCharacters(in: .whitespaces)), hit >= 0
+    else {
+      throw SoundPingError.usage(
+        "invalidParameters",
+        "--sim-fault takes <kind>@<hit> with a kind from \(Kind.allCases.map(\.rawValue).joined(separator: ", ")) and a hit index of 0 or more; got '\(spec)'",
+        context: ["parameter": "sim-fault", "value": spec])
+    }
+    return Fault(kind: kind, atHit: hit)
   }
 }
 
@@ -166,6 +175,17 @@ public actor SimulatedBackend: AudioBackend {
   private var hits: [ScheduledHit] = []
   /// Input frame where each simulated xrun drops `xrunFrames` frames, ascending.
   private var xrunGaps: [Int64] = []
+  /// Device events waiting for virtual time to reach their input frame, ascending.
+  private var pendingEvents: [PendingEvent] = []
+  private var outputUID = ""
+  private var inputUID = ""
+
+  private struct PendingEvent {
+    var frame: Int64
+    var event: DeviceEvent
+    /// A change that ends the device's audio: the backend stops delivering once it has said so.
+    var fatal: Bool
+  }
   /// Input labels below this are captured (exclusive bound). Starts at the input origin.
   private var framesProcessed: Int64 = 0
   private var started = false
@@ -204,6 +224,8 @@ public actor SimulatedBackend: AudioBackend {
     self.templates = regenerated
 
     twoDevices = setup.output.uid != setup.input.uid
+    outputUID = setup.output.uid
+    inputUID = setup.input.uid
     outputOrigin = twoDevices ? Self.twoDeviceOutputOrigin : 0
     inputOrigin = twoDevices ? Self.twoDeviceInputOrigin : 0
     framesProcessed = inputOrigin
@@ -243,12 +265,16 @@ public actor SimulatedBackend: AudioBackend {
     hits.sort { $0.outputFrame < $1.outputFrame }
     try validateFaultIndices()
     xrunGaps = faultGaps()
+    pendingEvents = faultEvents()
   }
 
   /// A fault index that names no scheduled hit is a typo, not a no-op (T-01-15).
   private func validateFaultIndices() throws {
     let highest = hits.map(\.index).max() ?? -1
-    for (name, indices) in [("sim-miss", scenario.missedHits), ("sim-xrun", scenario.xrunHits)] {
+    for (name, indices) in [
+      ("sim-miss", scenario.missedHits), ("sim-xrun", scenario.xrunHits),
+      ("sim-fault", scenario.faults.map(\.atHit)),
+    ] {
       if let bad = indices.first(where: { $0 < 0 || $0 > highest }) {
         throw SoundPingError.usage(
           "invalidParameters",
@@ -258,17 +284,64 @@ public actor SimulatedBackend: AudioBackend {
     }
   }
 
+  /// An overload is an xrun that also announces itself on the event stream, the way the HAL's
+  /// processor-overload notification does; the lost frames reject the hit through the stamps.
+  private var xrunIndices: Set<Int> {
+    Set(scenario.xrunHits).union(scenario.faults.filter { $0.kind == .overload }.map(\.atHit))
+  }
+
   /// Each xrun lands on the first buffer boundary after the middle of its hit's arrival, so the
   /// stimulus is cut in two the way a real glitch cuts it.
-  private func faultGaps() -> [Int64] {
+  private func gapFrame(of hit: ScheduledHit) -> Int64? {
+    guard xrunIndices.contains(hit.index), let template = templates[hit.templateId] else {
+      return nil
+    }
     let buffer = Int64(scenario.bufferFrames)
-    let xrun = Set(scenario.xrunHits)
-    return hits.compactMap { hit -> Int64? in
-      guard xrun.contains(hit.index), let template = templates[hit.templateId] else { return nil }
-      let middle = arrivalFrame(of: hit) + Double(template.samples.count) / 2
-      let relative = Int64(middle.rounded(.up)) - inputOrigin
-      return inputOrigin + (relative + buffer - 1) / buffer * buffer
-    }.sorted()
+    let middle = arrivalFrame(of: hit) + Double(template.samples.count) / 2
+    let relative = Int64(middle.rounded(.up)) - inputOrigin
+    return inputOrigin + (relative + buffer - 1) / buffer * buffer
+  }
+
+  private func faultGaps() -> [Int64] {
+    hits.compactMap(gapFrame(of:)).sorted()
+  }
+
+  /// The device events the faults ask for, each at the input frame where its hit's output frame
+  /// falls on the input device's labels.
+  private func faultEvents() -> [PendingEvent] {
+    var events: [PendingEvent] = []
+    for fault in scenario.faults {
+      guard let hit = hits.first(where: { $0.index == fault.atHit }) else { continue }
+      let frame = inputOrigin + (hit.outputFrame - outputOrigin)
+      switch fault.kind {
+      case .deviceGone:
+        events.append(PendingEvent(frame: frame, event: .gone(uid: outputUID), fatal: true))
+      case .sampleRateChange:
+        let to = scenario.sampleRate == 44_100 ? 48_000.0 : 44_100.0
+        events.append(
+          PendingEvent(
+            frame: frame,
+            event: .sampleRateChanged(uid: outputUID, from: scenario.sampleRate, to: to),
+            fatal: true))
+      case .bufferChange:
+        events.append(
+          PendingEvent(
+            frame: frame,
+            event: .bufferSizeChanged(
+              uid: outputUID, from: scenario.bufferFrames, to: scenario.bufferFrames * 2),
+            fatal: true))
+      case .streamConfigChange:
+        events.append(
+          PendingEvent(frame: frame, event: .streamConfigChanged(uid: outputUID), fatal: true))
+      case .overload:
+        if let gap = gapFrame(of: hit) {
+          events.append(
+            PendingEvent(
+              frame: gap, event: .overload(uid: inputUID, atInputFrame: gap), fatal: false))
+        }
+      }
+    }
+    return events.sorted { $0.frame < $1.frame }
   }
 
   public func waitUntilCaptured(throughInputFrame: Int64) async throws {
@@ -279,6 +352,20 @@ public actor SimulatedBackend: AudioBackend {
     let buffer = Int64(scenario.bufferFrames)
     let relative = throughInputFrame - inputOrigin
     framesProcessed = inputOrigin + (relative + buffer - 1) / buffer * buffer
+    try await deliverDueEvents()
+  }
+
+  /// Says what happened while the frames just processed went by. After a change that ends the
+  /// device's audio the wait never returns, like the wait on a device that vanished, until the
+  /// coordinator reacts to the event and cancels it.
+  private func deliverDueEvents() async throws {
+    while let next = pendingEvents.first, next.frame < framesProcessed {
+      pendingEvents.removeFirst()
+      eventContinuation.yield(next.event)
+      if next.fatal {
+        while true { try await Task.sleep(for: .seconds(3600)) }
+      }
+    }
   }
 
   public func capture(_ range: Range<Int64>) async throws -> [Float] {

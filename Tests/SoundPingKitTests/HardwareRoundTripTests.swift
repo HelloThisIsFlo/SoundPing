@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Testing
 
@@ -76,5 +77,37 @@ struct HardwareRoundTripTests {
     #expect(
       abs(medians[0] - medians[1]) <= 2,
       "medians \(medians) differ by more than 2 frames")
+  }
+
+  /// Every listener registers on a real device and is gone again afterwards, and watching a device
+  /// that nobody touches says nothing.
+  @Test func deviceListenersRegisterOnARealDeviceAndComeOffAgain() async throws {
+    let listing = try HALDeviceCatalog().listing()
+    let setup = try Self.resolveSetup()
+    let device = try #require(listing.audio.first { $0.uid == setup.output.uid })
+    let ids = HALProperty.array(
+      AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices,
+      of: AudioDeviceID.self, initial: AudioDeviceID(0))
+    let id = try #require(
+      ids.first { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == device.uid })
+    let buffer = Int(
+      HALProperty.get(id, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)) ?? 0)
+
+    let rt = RTState(
+      RTState.Configuration(
+        sampleRate: device.nominalSampleRate, inputSlot: nil, outputSlots: [], templates: [],
+        scheduleCapacity: 1, stampCapacity: 1))
+    let (stream, sink) = AsyncStream<DeviceEvent>.makeStream()
+    let listeners = DeviceListeners(
+      watching: [.init(id: id, uid: device.uid, bufferFrames: buffer)],
+      rate: device.nominalSampleRate, rt: rt, sink: sink)
+    // Six per-device selectors (stream configuration once per direction) plus the system list.
+    #expect(listeners.refused.load(ordering: .relaxed) == 0)
+    listeners.remove()
+    listeners.remove()
+    sink.finish()
+    var seen: [DeviceEvent] = []
+    for await event in stream { seen.append(event) }
+    #expect(seen.isEmpty, "unexpected events: \(seen)")
   }
 }

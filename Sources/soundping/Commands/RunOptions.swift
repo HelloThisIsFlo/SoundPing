@@ -117,9 +117,8 @@ struct RunOptions: ParsableArguments {
     guard let seed else {
       throw SoundPingError.internalFailure("seedNotPinned", "the run seed was never drawn")
     }
-    return (
-      SimulatedBackend(scenario: simulation.scenario(seed: seed, bufferFrames: buffer ?? 128)), setup
-    )
+    let scenario = try simulation.scenario(seed: seed, bufferFrames: buffer ?? 128)
+    return (SimulatedBackend(scenario: scenario), setup)
   }
 
   /// Turns the device flags and `--setup` into a `ResolvedSetup`, prints each warning to stderr

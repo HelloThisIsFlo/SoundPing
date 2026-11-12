@@ -262,4 +262,12 @@ private actor LateEventBackend: AudioBackend {
     let legacy = try JSONSerialization.data(withJSONObject: object)
     #expect(try JSONDecoder().decode(Scenario.self, from: legacy).faults.isEmpty)
   }
+
+  // MARK: What the HAL listeners cover
+
+  @Test func theListenersCoverEveryChangeTheHALAnnounces() {
+    let codes = Set(DeviceListeners.deviceSelectors.compactMap { HALProperty.fourCharCode($0) })
+    #expect(codes == ["livn", "nsrt", "fsiz", "slay", "over", "stpd"])
+    #expect(HALProperty.fourCharCode(DeviceListeners.systemSelector) == "dev#")
+  }
 }
