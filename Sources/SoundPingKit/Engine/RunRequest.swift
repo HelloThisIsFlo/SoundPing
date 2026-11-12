@@ -82,6 +82,9 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
   public var setupName: String?
   public var midiOut: MIDIRef?
   public var warnings: [String]
+  /// `--in-channel auto` was asked for: `inChannel` is 0 (unresolved) and the caller must probe the
+  /// input device for the channel that hears the chirp before anything is measured (D-11).
+  public var autoInChannel: Bool
 
   public init(
     output: DeviceRef,
@@ -93,7 +96,8 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
     requestedBufferFrames: Int? = nil,
     setupName: String? = nil,
     midiOut: MIDIRef? = nil,
-    warnings: [String] = []
+    warnings: [String] = [],
+    autoInChannel: Bool = false
   ) {
     self.output = output
     self.input = input
@@ -105,6 +109,7 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
     self.setupName = setupName
     self.midiOut = midiOut
     self.warnings = warnings
+    self.autoInChannel = autoInChannel
   }
 }
 

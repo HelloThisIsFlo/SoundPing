@@ -100,6 +100,9 @@ public struct Scenario: Codable, Sendable, Equatable {
   public var inputZeros: Bool
   /// The output reports itself muted.
   public var outputMuted: Bool
+  /// The 1-based input channel the stimulus comes back on; every other channel hears only noise.
+  /// Nil means the one channel a run opens hears it.
+  public var loopChannel: Int?
   public var seed: UInt64
 
   public init(
@@ -118,6 +121,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     permission: PermissionStatus = .authorized,
     inputZeros: Bool = false,
     outputMuted: Bool = false,
+    loopChannel: Int? = nil,
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -135,6 +139,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.permission = permission
     self.inputZeros = inputZeros
     self.outputMuted = outputMuted
+    self.loopChannel = loopChannel
     self.seed = seed
   }
 
@@ -157,6 +162,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     permission = try c.decodeIfPresent(PermissionStatus.self, forKey: .permission) ?? .authorized
     inputZeros = try c.decodeIfPresent(Bool.self, forKey: .inputZeros) ?? false
     outputMuted = try c.decodeIfPresent(Bool.self, forKey: .outputMuted) ?? false
+    loopChannel = try c.decodeIfPresent(Int.self, forKey: .loopChannel)
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
