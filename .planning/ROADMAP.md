@@ -42,11 +42,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Every run is saved with its metadata (devices, sample rate, buffer, recipe, date), a label and tags, and the round trip is stored as a calibration for that device pair, sample rate and buffer, labelled "round trip" and never applied as "mic delay"
   4. Broken setups stop with a named cause: missing mic permission (naming the terminal app that owns it), silent or clipping input, or a device that disappears or changes sample rate or buffer mid-run; `--simulate` runs the recipe with no gear, recovers the injected latency and jitter, and runs in CI
   5. Exit gates before Phase 2: the host-clock self-test passes (sample-count and host-clock paths agree within ~2 samples), and the repo carries its chosen open-source licence before any ported code lands (the licence part of REL-04)
-**Plans**: 10 plans
+**Plans**: 1/10 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md — Licensed, buildable repo: PolyForm Shield LICENSE first, SwiftPM scaffold + CI, CLA (Flo picks fill-ins), CONTRIBUTING, README
+- [x] 01-01-PLAN.md — Licensed, buildable repo: PolyForm Shield LICENSE first, SwiftPM scaffold + CI, CLA (Flo picks fill-ins), CONTRIBUTING, README
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02-PLAN.md — Walking skeleton: `soundping run round-trip --simulate --json` → run.json, seeded spacing + warm-ups, CI on every push
@@ -160,7 +160,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Audio Round Trip | 0/9 | Planned | - |
+| 1. Audio Round Trip | 1/10 | In Progress | - |
 | 2. Tool-Sent MIDI | 0/TBD | Not started | - |
 | 3. Output Chain & Run Comparison | 0/TBD | Not started | - |
 | 4. Real Key Press & Chain Breakdown | 0/TBD | Not started | - |
