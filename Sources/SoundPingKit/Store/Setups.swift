@@ -58,11 +58,53 @@ public enum Setups {
   /// A missing file is an empty file. Anything unreadable, malformed or of another schema
   /// version is a usage error naming the file, never a crash (T-01-17).
   public static func load(from url: URL) throws -> SetupsFile {
-    throw SoundPingError.internalFailure("notImplemented", "Setups.load")
+    guard FileManager.default.fileExists(atPath: url.path) else { return SetupsFile() }
+
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch {
+      throw unreadable(url, "cannot read it (\(error.localizedDescription))")
+    }
+
+    // Read the version alone first, so a file from another schema reports its version rather
+    // than whatever field happened to fail to decode.
+    struct Header: Decodable { var schemaVersion: Int }
+    do {
+      let header = try JSONDecoder().decode(Header.self, from: data)
+      guard header.schemaVersion == SetupsFile.currentSchemaVersion else {
+        throw unreadable(
+          url,
+          "it has schemaVersion \(header.schemaVersion), this build reads \(SetupsFile.currentSchemaVersion)"
+        )
+      }
+      return try JSONDecoder().decode(SetupsFile.self, from: data)
+    } catch let error as SoundPingError {
+      throw error
+    } catch {
+      throw unreadable(url, "it is not valid setups JSON (\(error.localizedDescription))")
+    }
   }
 
   /// Writes atomically, so a crash never leaves half a file.
   public static func save(_ file: SetupsFile, to url: URL) throws {
-    throw SoundPingError.internalFailure("notImplemented", "Setups.save")
+    do {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      var data = try RunJSON.fileEncoder().encode(file)
+      data.append(0x0A)
+      try data.write(to: url, options: .atomic)
+    } catch {
+      throw SoundPingError.usage(
+        "setupsUnwritable",
+        "cannot write the saved setups to '\(url.path)': \(error.localizedDescription)",
+        context: ["path": url.path])
+    }
+  }
+
+  private static func unreadable(_ url: URL, _ reason: String) -> SoundPingError {
+    SoundPingError.usage(
+      "setupsUnreadable", "the saved setups file '\(url.path)' is unusable: \(reason)",
+      context: ["path": url.path])
   }
 }
