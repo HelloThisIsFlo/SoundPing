@@ -49,7 +49,7 @@ findings:
     title: "Several stdout writes bypass `Output`'s guarded write"
   - id: IN-08
     severity: info
-    disposition: open
+    disposition: skipped
     title: "The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`"
   - id: IN-09
     severity: info
@@ -119,9 +119,9 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-open: 16
+open: 15
 total: 29
-recorded: 2026-11-12T17:41:27.841Z
+recorded: 2026-11-12T19:07:51.911Z
 ---
 
 # Phase 01: Code Review Disposition
@@ -139,7 +139,7 @@ recorded: 2026-11-12T17:41:27.841Z
 | IN-05 | info | open | - |
 | IN-06 | info | open | - |
 | IN-07 | info | open | - |
-| IN-08 | info | open | - |
+| IN-08 | info | skipped | 01-REVIEW-FIX.md |
 | IN-09 | info | open | - |
 | IN-10 | info | open | - |
 | IN-11 | info | open | - |
