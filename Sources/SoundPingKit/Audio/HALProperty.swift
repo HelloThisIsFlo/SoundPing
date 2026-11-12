@@ -1,9 +1,10 @@
 import CoreAudio
 import Foundation
 
-/// Typed readers for HAL properties. Read only: nothing in this plan ever calls
-/// `AudioObjectSetPropertyData` (T-01-19). Every address uses `kAudioObjectPropertyElementMain`
-/// unless a per-channel element is meant (RESEARCH L685).
+/// Typed readers for HAL properties. Read only: nothing in this file calls
+/// `AudioObjectSetPropertyData` (T-01-19). The one property SoundPing ever sets, its own
+/// per-process I/O buffer size, is set in `HALBackend.applyBuffer`. Every address uses
+/// `kAudioObjectPropertyElementMain` unless a per-channel element is meant (RESEARCH L685).
 enum HALProperty {
   static func address(
     _ selector: AudioObjectPropertySelector,

@@ -189,7 +189,8 @@ public struct RunStore: Sendable {
 
 extension RunStore {
   /// The run.json file for a run id (a bare folder name under `runs/`) or an absolute folder path
-  /// that holds one. Anything else is `unreadableRun` and nothing outside `runs/` is read (T-01-34).
+  /// that holds one. An id is resolved under `runs/` only; an absolute path is read where it points,
+  /// because the caller names it explicitly (T-01-34). Anything else is `unreadableRun`.
   func runFile(_ idOrPath: String) throws -> URL {
     let folder: URL
     if idOrPath.hasPrefix("/") {

@@ -49,7 +49,7 @@ created: "2026-11-12"
 | T-01-16 | Spoofing | device selection by name | high | mitigate | SetupResolver throws ambiguous for >1 exact/partial match; ResolverTests | closed |
 | T-01-17 | Denial of service | setups.json decode | medium | mitigate | Setups setupsUnreadable typed decode | closed |
 | T-01-18 | Tampering | negative MIDI IDs parsed as flags | low | mitigate | RunOptions parsing: .unconditional | closed |
-| T-01-19 | Tampering | device settings | high | mitigate | No AudioObjectSetPropertyData in DeviceCatalog/HALProperty (doc comment only) | closed |
+| T-01-19 | Tampering | device settings | high | mitigate | No AudioObjectSetPropertyData in DeviceCatalog/HALProperty (doc comment only); the one set is HALBackend.applyBuffer, SoundPing's own per-process buffer size | closed |
 | T-01-20 | Tampering (integrity of results) | calibration misuse | high | mitigate | CalibrationKind only case roundTrip; CalibrationStoreTests | closed |
 | T-01-21 | Denial of service | calibrations.json / clock-selftest.json decode | medium | mitigate | schemaVersion checks in CalibrationStore/ClockSelfTestStore | closed |
 | T-01-22 | Repudiation | stale or wrong clock status | medium | mitigate | ClockSelfTestStore entries carry runId + measuredAt | closed |
@@ -64,7 +64,7 @@ created: "2026-11-12"
 | T-01-31 | Repudiation | exit-gate verdict | medium | mitigate | bench.sh numeric gates, BENCH GATE PASS/FAIL exit 3; raw JSON kept | closed |
 | T-01-32 | Safety (hearing) | bench runs on speakers/headphones | medium | mitigate | bench.sh uses soundping run (ramp + ceilings always on), never passes --level/--max-level | closed |
 | T-01-33 | Tampering | TCC reset and the Terminal.app prompt during the human checks | low | accept | Accepted risk (see log) | closed |
-| T-01-34 | Information disclosure | `runs show <id-or-path>` / RunStore.load | low | mitigate | RunStore unreadableRun for ids outside runs/ | closed |
+| T-01-34 | Information disclosure | `runs show <id-or-path>` / RunStore.load | low | mitigate | RunStore resolves an id under runs/ only (unreadableRun otherwise); an absolute folder path holding run.json is read where it points, because the caller names it explicitly | closed |
 | T-01-SC | Tampering | SwiftPM installs | high | mitigate | Only apple/swift-argument-parser 1.8.2 + apple/swift-log 1.17.0, exact pins; no packages added after 01-01 | closed |
 
 *Status: open · closed · open — below high threshold (non-blocking)*
