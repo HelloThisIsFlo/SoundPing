@@ -3,6 +3,78 @@ phase: 01
 review: 01-REVIEW.md
 titles: json
 findings:
+  - id: CR-03
+    severity: critical
+    disposition: open
+    title: "A virtual or \"Loop\" input overrides the headphone ceiling: the ramp can reach -6 dBFS in headphones (external: codex)"
+  - id: WR-01
+    severity: warning
+    disposition: skipped
+    title: "Overload rejection is racy and checks a single frame, not the lost interval"
+  - id: WR-03
+    severity: warning
+    disposition: skipped
+    title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
+  - id: IN-02
+    severity: warning
+    disposition: open
+    title: "The same-device window has no pre-roll, so a near-zero path is rejected as `outsideWindow`"
+  - id: WR-12
+    severity: warning
+    disposition: open
+    title: "A built-in output without a readable `hdpn` data source gets the speaker ceiling: the classifier fails open"
+  - id: IN-01
+    severity: info
+    disposition: open
+    title: "A probe rejected for an overload or a discontinuity counts as \"not heard\", so the ramp climbs 6 dB"
+  - id: IN-03
+    severity: info
+    disposition: open
+    title: "`requireFloat32` checks only the first stream of a scope"
+  - id: IN-04
+    severity: info
+    disposition: open
+    title: "Doc comments contradict the code"
+  - id: IN-05
+    severity: info
+    disposition: open
+    title: "Dead code and an unused dependency"
+  - id: IN-06
+    severity: info
+    disposition: open
+    title: "Duplicated logic"
+  - id: IN-07
+    severity: info
+    disposition: open
+    title: "Several stdout writes bypass `Output`'s guarded write"
+  - id: IN-08
+    severity: info
+    disposition: open
+    title: "The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`"
+  - id: IN-09
+    severity: info
+    disposition: open
+    title: "`HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it"
+  - id: IN-10
+    severity: info
+    disposition: open
+    title: "`--in-channel auto` ignores device changes while it probes (external: codex)"
+  - id: IN-11
+    severity: info
+    disposition: open
+    title: "`RunParameters.minValidFraction` is never validated (external: codex)"
+  - id: IN-12
+    severity: info
+    disposition: open
+    title: "Simulation flags are not range-checked and can trap the process (external: codex)"
+  - id: IN-13
+    severity: info
+    disposition: open
+    title: "A side-file write failure after run.json turns a saved run into a reported failure (WR-02 residual)"
+  - id: IN-14
+    severity: info
+    disposition: open
+    title: "`recipes` output still disagrees with what a run uses"
   - id: CR-01
     severity: critical
     disposition: fixed
@@ -11,18 +83,10 @@ findings:
     severity: critical
     disposition: fixed
     title: "`--in-channel auto` ignores the headphone ceiling and probes up to -18 dBFS into known headphones"
-  - id: WR-01
-    severity: warning
-    disposition: skipped
-    title: "Overload rejection is racy and checks a single frame, not the lost interval"
   - id: WR-02
     severity: warning
     disposition: fixed
     title: "Calibration and self-test records are written before run.json, so a failed write orphans them"
-  - id: WR-03
-    severity: warning
-    disposition: skipped
-    title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
   - id: WR-04
     severity: warning
     disposition: fixed
@@ -55,66 +119,21 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-  - id: IN-01
-    severity: info
-    disposition: open
-    title: "A probe rejected for an overload or a discontinuity counts as \"not heard\", so the ramp climbs 6 dB"
-  - id: IN-02
-    severity: info
-    disposition: open
-    title: "The same-device window has no pre-roll, so a near-zero path is rejected as `outsideWindow`"
-  - id: IN-03
-    severity: info
-    disposition: open
-    title: "`requireFloat32` checks only the first stream of a scope"
-  - id: IN-04
-    severity: info
-    disposition: open
-    title: "Doc comments contradict the code"
-  - id: IN-05
-    severity: info
-    disposition: open
-    title: "Dead code and an unused dependency"
-  - id: IN-06
-    severity: info
-    disposition: open
-    title: "Duplicated logic"
-  - id: IN-07
-    severity: info
-    disposition: open
-    title: "Several stdout writes bypass `Output`'s guarded write"
-  - id: IN-08
-    severity: info
-    disposition: open
-    title: "The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`"
-  - id: IN-09
-    severity: info
-    disposition: open
-    title: "`HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it"
-open: 9
-total: 22
-recorded: 2026-11-12T17:30:03.697Z
+open: 16
+total: 29
+recorded: 2026-11-12T17:41:27.841Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | fixed | 01-REVIEW-FIX.md |
-| CR-02 | critical | fixed | 01-REVIEW-FIX.md |
+| CR-03 | critical | open | - |
 | WR-01 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-02 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-03 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-04 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-05 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-06 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-07 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-08 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-09 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-10 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-11 | warning | fixed | 01-REVIEW-FIX.md |
+| IN-02 | warning | open | - |
+| WR-12 | warning | open | - |
 | IN-01 | info | open | - |
-| IN-02 | info | open | - |
 | IN-03 | info | open | - |
 | IN-04 | info | open | - |
 | IN-05 | info | open | - |
@@ -122,6 +141,22 @@ recorded: 2026-11-12T17:30:03.697Z
 | IN-07 | info | open | - |
 | IN-08 | info | open | - |
 | IN-09 | info | open | - |
+| IN-10 | info | open | - |
+| IN-11 | info | open | - |
+| IN-12 | info | open | - |
+| IN-13 | info | open | - |
+| IN-14 | info | open | - |
+| CR-01 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| CR-02 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-02 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-04 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-05 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-06 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-07 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-08 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-09 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-10 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-11 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
 
 Dispositions: `open` (recorded, not yet triaged), `fixed`, `skipped`, `deferred`.
 Set `deferred` by hand and put the reason in the Source cell; both are preserved. A `|` in the reason is kept as prose and escaped on the next run.
