@@ -1,19 +1,44 @@
 ---
 phase: 01-audio-round-trip
-fixed_at: 2026-11-12T20:30:13Z
+fixed_at: 2026-11-12T21:06:20Z
 review_path: .planning/phases/01-audio-round-trip/01-REVIEW.md
-iteration: 4
-findings_in_scope: 10
-fixed: 10
+iteration: 5
+findings_in_scope: 4
+fixed: 4
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 01: Code Review Fix Report
 
-**Fixed at:** 2026-11-12T20:30:13Z
+**Fixed at:** 2026-11-12T21:06:20Z
 **Source review:** .planning/phases/01-audio-round-trip/01-REVIEW.md
-**Iteration:** 4
+**Iteration:** 5
+
+**Summary (iteration 5, against the fourth review, the second regression pass):**
+- Findings in scope: 4 (1 critical, 2 warning, 1 info; `fix_scope: all`, the maintainer listed all four)
+- Fixed: 4, skipped: 0. One commit per finding; CR-05 is a single commit (code, docs and the rewritten invariant suite together, because the suite only passes with the new rule).
+- **CR-05 was not fixed as the review suggested.** Maintainer decision: remove the loop exception instead of narrowing the loop guess a fourth time. The ceiling now comes from the output alone (see the model below).
+- Ledger across all iterations: 43 findings fixed (11 in iterations 1 and 2, 15 in iteration 3, 3 in the planned change after it, 10 in iteration 4, 4 in iteration 5), 0 deferred.
+
+**🔊 The loudness model, as it now stands (CR-05; supersedes the iteration 4 model below it):**
+- **The ceiling is chosen from the output only:**
+  - known headphones -30 dBFS: any Bluetooth output (classic or LE), or a built-in output that does not clearly report its speakers (`ispk`; WR-12 fail-safe)
+  - built-in speakers (`ispk`) -12 dBFS
+  - everything else -18 dBFS, including every virtual output, every loop and every interface
+- **There is no automatic loopback/-6 ceiling any more**, for any input or output combination. The input never changes the ceiling.
+- **`--listener`** describes the setup: the listener the run reports and, without `--template`, the chirp band. It can lower the ceiling (headphones -30, speaker -12, unknown -18; loopback lowers nothing), never raise it.
+- **`--max-level`** is the only way to a louder probe (it replaces the ceiling). **`--level`** stays clamped to the ceiling.
+- **The `--in-channel auto` probe** follows the same output rule, capped at -18 as before (so the built-in speakers probe at -18, not -12).
+- **Why:** the ramp starts at -48 dBFS and stops at the first clearly heard probe, so a real loop locks far below -18. The -6 exception bought nothing and caused every safety regression (CR-02 to CR-05). A loop that genuinely needs more uses `--max-level`.
+- Written down once at `LevelRamp.loudness`, mirrored in the `--listener`, `--max-level` and `--level` help, the `nothingHeardAtCeiling` detail and hint, and the README "Test-sound loudness" section.
+
+**Verification (iteration 5):**
+- **Where it ran:** an isolated worktree (`.claude/worktrees/rf-01-39348-1794516595`, branch `gsd-reviewfix/01-39348`). `swift build`, `swift test` and `scripts/ci-sim.sh` ran before every commit. Main had not moved (base `079d2d5`), so the 4 commits were fast-forwarded as they are; the hashes below are final.
+- **Then once more in the main checkout** after the fast-forward: `swift build`, `swift test` (320 tests in the kit target, 44 in the CLI target) and `scripts/ci-sim.sh` (`ci-sim: OK`). No IOProc code was touched.
+- **Guards checked by breaking the code on purpose, then reverting:** a reintroduced loop exception (`detected == .loopback` → -6) fails `LoudnessInvariantTests` with 209 issues; mapping BLE to `"bluetoothLE"` or renaming `"builtIn"` fails it too; the WR-15 and WR-16 tests fail without their fixes.
+- **Hardware:** `just hw-test` and `just bench` were NOT run and no sound was played. The Scarlett `Loop 1` hardware round trip is now capped at -18 dBFS (it was -6); it is expected to lock far below that, but that is unconfirmed.
+- `.planning/config.json` and `.planning/state.json` were never staged.
 
 **Summary (iteration 4, against the third review, the regression pass):**
 - Findings in scope: 10 (1 critical, 2 warning, 7 info, IN-21 being the one necessity finding; `fix_scope: all`, the maintainer asked for every finding)
@@ -21,7 +46,7 @@ status: all_fixed
 - CR-04 and WR-13 were fixed together as one loudness model (`0d90368`), with its invariant test in its own commit (`b8f93dc`). WR-14 has a follow-up commit (`82c2f6f`) for a bug its own hardware test found. Every other finding is one commit.
 - Ledger across all iterations: 39 findings fixed (11 in iterations 1 and 2, 15 in iteration 3, 3 in the planned change after it, 10 in iteration 4), 0 deferred.
 
-**🔊 The loudness model (CR-04, WR-13), as it now stands:**
+**🔊 The loudness model after iteration 4 (CR-04, WR-13). Superseded by iteration 5 (CR-05): there is no loopback -6 ceiling any more, see the model above.**
 - **SoundPing works out the listener from the devices**, in this order:
   - headphones, -30 dBFS: any Bluetooth output, or a built-in output that does not report its speakers (`ispk`)
   - loopback, -6 dBFS: a loop it can see (a `Loop` input channel or a virtual input on the output's own device, or a virtual output into a virtual input)
@@ -57,6 +82,56 @@ status: all_fixed
 - **Hardware:** `just hw-test` and `just bench` were NOT run and no sound was played. Everything that needs a real loop is marked "requires human verification" below.
 
 ## Fixed Issues
+
+**Iteration 5**
+
+### CR-05: Two unrelated virtual devices count as "a loop SoundPing can see": a monitored virtual output can ramp to -6 dBFS into headphones
+
+**Status:** fixed: requires human verification (hearing-safety ceiling logic; every combination is unit tested and simulated, but real outputs, virtual devices such as Loopback and BlackHole, and the Scarlett loop now locking under -18 dBFS need a check)
+**Files modified:** `Sources/SoundPingKit/Preflight/LevelRamp.swift`, `Sources/SoundPingKit/Preflight/Preflight.swift`, `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Sources/soundping/Commands/RunOptions.swift`, `README.md`, `Tests/SoundPingKitTests/LoudnessInvariantTests.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`, `Tests/SoundPingKitTests/ChannelProbeTests.swift`, `Tests/SoundPingKitTests/HardwareRoundTripTests.swift`
+**Commit:** 8f08bb0 (one commit: the rule, its docs and the rewritten invariant suite, which only passes with the new rule)
+**Applied fix:**
+- **Cause removed, not narrowed (maintainer decision).** The review's narrower loop rule was not applied. The ceiling now comes from a new `LevelRamp.OutputClass` (headphones -30, speakers -12, other -18), read from the output device alone (`outputClass`). That type has no loop case, so no input or loop can reach the ceiling any more. `ceilingDbfs(for: ListenerKind)` and the -6 number are gone.
+- **Loop detection kept only where it does something else.** `classify` still reports a visible loop as `loopback`, which picks the full-range chirp (`chirp-loopback`), the reported listener and the "check the loop routing" hint. It no longer touches loudness. Its rule is unchanged (same-device `Loop` channel or virtual input, or two virtual devices), so the band and the reported listener behave as before.
+- **`--listener`** lowers to `listenerCeilingDbfs` (headphones -30, speaker -12, unknown -18, loopback nil: it lowers nothing), never raises. **`--max-level`** replaces the ceiling. **`--level`** stays clamped.
+- **Probe:** `probeLoudness` keeps the output's class but caps it at the -18 of "other", as before; its message says "the channel probe's limit, below the ceiling for the built-in speakers" rather than misnaming the output.
+- **Strings:** the model doc moved to `LevelRamp.loudness` (all "see `classify`" references follow), plus the `--max-level`, `--listener` help (`--level` already said the right thing), the `nothingHeardAtCeiling` detail ("for headphones, chosen from the output alone") and hint (a detected loop: check the routing first, no loop gets a louder ceiling, `--max-level` only if it really needs more; any other output: the ceiling comes from the output alone), the `--listener does not raise` warning, the README section and the hardware test's header comment. The only -6 left in user-facing text is the `--max-level -6` example for a loop that really needs it.
+- **Error context change:** `ceilingSource` is now `"output"` (was `"devices"`), and the context gains `"output"` (`headphones` / `speakers` / `other`).
+- **`LoudnessInvariantTests` rewritten from the written rule**, with literal ceilings per output kind (never read from `LevelRamp`): 15 output kinds × 7 input kinds (now including a `Loop 1` channel on another virtual device) × 5 `--listener` × 3 `--max-level`, on the run and probe paths. It checks the exact ceiling, that no input changes it (one ceiling per output and flags across every input), never above -12 without `--max-level`, headphones never above -30, the probe never above -18, and that the flag names the reported listener. The played-level checks drive the simulator over 5 outputs × 4 run inputs (microphone, the output's own device, a `Loop 1` channel on it, another virtual device) × 5 `--listener` × (none, `--level -3`, `--max-level -3`), and 5 outputs × 2 probe inputs × 5 `--listener` × 2 `--max-level`, and assert the loudest gain really scheduled.
+- **Removed or replaced old-loop tests:** `aVirtualOutputIntoAVirtualInputIsALoopback` became `twoVirtualDevicesKeepTheOutputCeilingWhateverTheyAreReportedAs` (still reported `loopback`, ceiling -18); `aLoopChannelOrAVirtualInputIsALoopback` now also asserts -18; `eachListenerHasItsOwnCeiling` became an output-ceiling test; the simulated duplex runs expect -18 and a six-step deaf ramp (`[-48 … -18]`), not -6.
+- **Guard verified:** reintroducing a loop exception (`detected == .loopback` → -6) makes the suite fail with 209 issues; reverted.
+
+### WR-15: The channel probe keeps the first channel's ceiling but re-baselines route watching on every reopen, so a route change between channels is never reported
+
+**Status:** fixed: requires human verification (the route change itself needs a real built-in output switching to headphones between two probed channels; simulated only)
+**Files modified:** `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Tests/SoundPingKitTests/AbortTests.swift`
+**Commit:** 21922b5
+**Applied fix:**
+- The probe keeps one baseline for its whole run: the loudness decided at the first open and the output data source it was decided with. Every reopen re-derives the probe loudness from that open's output info and compares both. A different data source (or output class) stops the backend and ends the probe with `deviceChanged` / `outputRouteChanged` (`property: dataSource`, `from`/`to` the two sources), before anything is played on the new route. Backend-agnostic, as the review's simpler option; the HAL's own per-open watcher then covers the open → register gap against a value already checked equal to the first.
+- The unreachable `noLoudness` guard inside the loop is gone (the ceiling comes from the loudness just derived).
+- Test: a forwarding backend whose second `open` reports `hdpn` for the built-in speakers first opened on `ispk` ends the probe at that reopen, with nothing scheduled after the switch. Fails without the fix (checked).
+- Residual, not changed: the `jackIsConnected` baseline is still taken per open; a jack change between channels is only caught when the data source changes with it (it does on a built-in output). Say if the jack should be carried across reopens too.
+
+### WR-16: A `--level` above the ceiling that hears nothing reports the requested level, not the clamped level that was played
+
+**Status:** fixed
+**Files modified:** `Sources/SoundPingKit/Preflight/Preflight.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Tests/SoundPingKitTests/LevelRampTests.swift`
+**Commit:** 51aa8a1
+**Applied fix:**
+- `nothingHeardError` takes `playedLevel` (the level really played, after the clamp) and `requestedLevel` (the `--level` asked for). When the request was above the ceiling the detail reads "Nothing was heard at -30 dBFS (--level -3 was lowered to the -30 dBFS ceiling, for headphones, chosen from the output alone)". A `--level` at or below the ceiling keeps "Nothing was heard at the chosen level of N dBFS".
+- The context gains `playedLevelDbfs` and `requestedLevelDbfs`.
+- Test: `--level -3` on a Bluetooth output with a deaf path plays one probe at -30 and the error names -30 and the clamp, never "-3" as played; `--level -36` keeps the old wording. Fails with the old argument (checked).
+
+### IN-22: The loudness invariant cannot catch a drift in the transport strings the classifier keys on
+
+**Status:** fixed
+**Files modified:** `Sources/SoundPingKit/Audio/DeviceCatalog.swift`, `Tests/SoundPingKitTests/LoudnessInvariantTests.swift`
+**Commit:** 3674cec
+**Applied fix:**
+- As the maintainer asked (no shared transport enum): `HALDeviceCatalog.transportName(for:)` is internal instead of private, unchanged otherwise.
+- The invariant suite's output kinds carry a HAL transport type (`kAudioDeviceTransportType*`) and take their transport string, and the catalog-miss refs theirs, from that mapping. A Bluetooth LE output kind was added. Expected ceilings stay literal.
+- New test: every `kAudioDeviceTransportType*` constant (except the deprecated `ContinuityCapture`; `RemoteScreen` and `RemoteStreaming` spelled as four-char codes so an older SDK builds) gets the rule's literal ceiling, both with device info and as a catalog miss; the built-in type is checked on `ispk` (-12), `hdpn` and no data source (-30). Another test pins the simulator fixtures' transports to the mapping's, since the played-level tests open the simulator.
+- Checked: mapping BLE to `"bluetoothLE"` or renaming `"builtIn"` fails the suite; both reverted.
 
 **Iteration 4**
 
@@ -440,6 +515,6 @@ None.
 
 ---
 
-_Fixed: 2026-11-12T20:30:13Z_
+_Fixed: 2026-11-12T21:06:20Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 4_
+_Iteration: 5_
