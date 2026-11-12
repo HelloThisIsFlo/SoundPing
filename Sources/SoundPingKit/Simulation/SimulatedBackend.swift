@@ -52,6 +52,9 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// Shifts every input-direction host stamp by this many frames, as a driver that stamps its
   /// input late would. The clock self-test must fail when it exceeds its 2 frame limit.
   public var stampBiasFrames: Double
+  /// How far the output sample labels run ahead of the input ones within a callback, like a real
+  /// duplex device (buffers plus safety offsets). Default `2 * bufferFrames + 28`.
+  public var ioOffsetFrames: Int
   public var seed: UInt64
 
   public init(
@@ -65,6 +68,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     xrunHits: [Int] = [],
     driftPPM: Double = 0,
     stampBiasFrames: Double = 0,
+    ioOffsetFrames: Int? = nil,
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -77,6 +81,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.xrunHits = xrunHits
     self.driftPPM = driftPPM
     self.stampBiasFrames = stampBiasFrames
+    self.ioOffsetFrames = ioOffsetFrames ?? 2 * bufferFrames + 28
     self.seed = seed
   }
 
@@ -93,6 +98,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     xrunHits = try c.decodeIfPresent([Int].self, forKey: .xrunHits) ?? []
     driftPPM = try c.decodeIfPresent(Double.self, forKey: .driftPPM) ?? 0
     stampBiasFrames = try c.decodeIfPresent(Double.self, forKey: .stampBiasFrames) ?? 0
+    ioOffsetFrames =
+      try c.decodeIfPresent(Int.self, forKey: .ioOffsetFrames) ?? 2 * bufferFrames + 28
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }

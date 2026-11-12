@@ -225,6 +225,9 @@ public struct RunResult: Codable, Sendable, Equatable {
   public var selfTest: ClockSelfTestResult?
   /// The timebase the host times of this run were converted with.
   public var hostTimebase: HostTimebase?
+  /// What the HAL reports for the devices of this run, shown next to the measured figures and
+  /// never applied to them (RES-02, ENG-06). Nil when a device's properties are unknown.
+  public var reported: ReportedLatency?
 
   public init(
     schemaVersion: Int = RunResult.currentSchemaVersion,
@@ -246,7 +249,8 @@ public struct RunResult: Codable, Sendable, Equatable {
     corrections: [Correction],
     simulation: Scenario?,
     selfTest: ClockSelfTestResult? = nil,
-    hostTimebase: HostTimebase? = nil
+    hostTimebase: HostTimebase? = nil,
+    reported: ReportedLatency? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.runId = runId
@@ -268,6 +272,7 @@ public struct RunResult: Codable, Sendable, Equatable {
     self.simulation = simulation
     self.selfTest = selfTest
     self.hostTimebase = hostTimebase
+    self.reported = reported
   }
 }
 
