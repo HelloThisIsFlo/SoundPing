@@ -9,11 +9,11 @@ findings:
     title: "A virtual or \"Loop\" input overrides the headphone ceiling: the ramp can reach -6 dBFS in headphones (external: codex)"
   - id: WR-01
     severity: warning
-    disposition: skipped
+    disposition: fixed
     title: "Overload rejection is racy and checks a single frame, not the lost interval"
   - id: WR-03
     severity: warning
-    disposition: skipped
+    disposition: fixed
     title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
   - id: IN-02
     severity: warning
@@ -49,7 +49,7 @@ findings:
     title: "Several stdout writes bypass `Output`'s guarded write"
   - id: IN-08
     severity: info
-    disposition: skipped
+    disposition: fixed
     title: "The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`"
   - id: IN-09
     severity: info
@@ -121,7 +121,7 @@ findings:
     title: "`bench.sh` aborts on any run with zero valid hits"
 open: 0
 total: 29
-recorded: 2026-11-12T19:08:04.228Z
+recorded: 2026-11-12T19:38:47.775Z
 ---
 
 # Phase 01: Code Review Disposition
@@ -129,8 +129,8 @@ recorded: 2026-11-12T19:08:04.228Z
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
 | CR-03 | critical | fixed | 01-REVIEW-FIX.md |
-| WR-01 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-03 | warning | skipped | 01-REVIEW-FIX.md |
+| WR-01 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-03 | warning | fixed | 01-REVIEW-FIX.md |
 | IN-02 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-12 | warning | fixed | 01-REVIEW-FIX.md |
 | IN-01 | info | fixed | 01-REVIEW-FIX.md |
@@ -139,7 +139,7 @@ recorded: 2026-11-12T19:08:04.228Z
 | IN-05 | info | fixed | 01-REVIEW-FIX.md |
 | IN-06 | info | fixed | 01-REVIEW-FIX.md |
 | IN-07 | info | fixed | 01-REVIEW-FIX.md |
-| IN-08 | info | skipped | 01-REVIEW-FIX.md |
+| IN-08 | info | fixed | 01-REVIEW-FIX.md |
 | IN-09 | info | fixed | 01-REVIEW-FIX.md |
 | IN-10 | info | fixed | 01-REVIEW-FIX.md |
 | IN-11 | info | fixed | 01-REVIEW-FIX.md |
