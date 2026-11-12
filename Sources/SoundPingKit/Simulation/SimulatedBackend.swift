@@ -28,6 +28,33 @@ public struct SplitMix64: RandomNumberGenerator, Sendable {
   }
 }
 
+/// A device change the simulator makes happen part way through a run (ENG-07). `atHit` uses the
+/// numbering of `HitRecord.index`, warm-ups first: the event fires when virtual time reaches that
+/// hit's output frame.
+public struct Fault: Codable, Sendable, Equatable {
+  public enum Kind: String, Codable, Sendable, CaseIterable {
+    case deviceGone
+    case sampleRateChange
+    case bufferChange
+    case streamConfigChange
+    /// An audio-thread overload: only the hit it lands in is rejected, the run goes on.
+    case overload
+  }
+
+  public var kind: Kind
+  public var atHit: Int
+
+  public init(kind: Kind, atHit: Int) {
+    self.kind = kind
+    self.atHit = atHit
+  }
+
+  /// `<kind>@<hit>`, e.g. `sampleRateChange@30`. Anything else is a usage error.
+  public static func parse(_ spec: String) throws -> Fault {
+    throw SoundPingError.internalFailure("notImplemented", "fault parsing: \(spec)")
+  }
+}
+
 /// What the simulated device does to the signal. Analytic: the stimulus is rendered at the exact
 /// fractional delay, never resampled, so sub-sample recovery is testable.
 public struct Scenario: Codable, Sendable, Equatable {
@@ -55,6 +82,8 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// How far the output sample labels run ahead of the input ones within a callback, like a real
   /// duplex device (buffers plus safety offsets). Default `2 * bufferFrames + 28`.
   public var ioOffsetFrames: Int
+  /// Device changes injected into the run, each at a hit index.
+  public var faults: [Fault]
   public var seed: UInt64
 
   public init(
@@ -69,6 +98,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     driftPPM: Double = 0,
     stampBiasFrames: Double = 0,
     ioOffsetFrames: Int? = nil,
+    faults: [Fault] = [],
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -82,6 +112,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.driftPPM = driftPPM
     self.stampBiasFrames = stampBiasFrames
     self.ioOffsetFrames = ioOffsetFrames ?? 2 * bufferFrames + 28
+    self.faults = faults
     self.seed = seed
   }
 
@@ -100,6 +131,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     stampBiasFrames = try c.decodeIfPresent(Double.self, forKey: .stampBiasFrames) ?? 0
     ioOffsetFrames =
       try c.decodeIfPresent(Int.self, forKey: .ioOffsetFrames) ?? 2 * bufferFrames + 28
+    faults = try c.decodeIfPresent([Fault].self, forKey: .faults) ?? []
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
