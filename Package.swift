@@ -25,5 +25,6 @@ let package = Package(
       ]
     ),
     .testTarget(name: "SoundPingKitTests", dependencies: ["SoundPingKit"]),
+    .testTarget(name: "soundpingTests", dependencies: ["soundping", "SoundPingKit"]),
   ]
 )
