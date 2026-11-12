@@ -302,6 +302,20 @@ private final class LoudestPlayedBackend: AudioBackend {
     return (setup, outputInfo, inputInfo)
   }
 
+  /// The loop label (reported listener and chirp band only, never the ceiling): a loop counts only
+  /// on one device, a `Loop` channel or a virtual input on the output's own device. Known
+  /// headphones are reported as headphones first.
+  private static func isLoop(_ output: OutputKind, _ input: InputKind) -> Bool {
+    guard !output.isKnownHeadphones else { return false }
+    switch input {
+    case .loopChannelSameDevice: return true
+    case .sameDevicePlainChannel: return output == .virtual || output == .virtualCatalogMiss
+    case .builtInMic, .interface, .loopChannelOtherDevice, .virtualOtherDevice,
+      .virtualLoopChannelOtherDevice:
+      return false
+    }
+  }
+
   private static let listeners: [ListenerKind?] = [nil] + ListenerKind.allCases.map { $0 }
   /// Absent, quieter than every ceiling, and louder than every ceiling.
   private static let maxLevels: [Double?] = [nil, -40, -3]
@@ -338,6 +352,8 @@ private final class LoudestPlayedBackend: AudioBackend {
               probe.ceilingDbfs
                 == Self.expected(output.ruleCeiling, listener: listener, maxLevel: maxLevel),
               "probe: \(label)")
+            #expect(
+              (run.detected == .loopback) == Self.isLoop(output, input), "loop label: \(label)")
             // The flag names the reported listener (and so the band), whatever it does to the ceiling.
             if let listener {
               #expect(run.kind == listener, "run: \(label)")

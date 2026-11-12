@@ -159,23 +159,22 @@ public struct LevelRamp: Sendable {
   /// | Detected listener | When |
   /// |---|---|
   /// | headphones | the output is headphones (see `outputClass`) |
-  /// | loopback | a `Loop` input channel or a virtual input on the output's own device, or a virtual output into a virtual input |
+  /// | loopback | a `Loop` input channel or a virtual input on the output's own device |
   /// | speaker | the built-in speakers |
-  /// | unknown | everything else |
+  /// | unknown | everything else, two separate virtual devices included |
+  ///
+  /// A loop counts only on one device. Two devices, virtual or not, may be joined by a router
+  /// SoundPing cannot read, so they get the ordinary listener (CR-05).
   public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
     -> ListenerKind
   {
     let outputClass = outputClass(setup: setup, output: output)
     if outputClass == .headphones { return .headphones }
 
-    let outputTransport = output?.transport ?? setup.output.transport
     let inputTransport = input?.transport ?? setup.input.transport
     let sameDevice = setup.output.uid == setup.input.uid
     let looped = setup.inChannelName?.lowercased().hasPrefix("loop") == true
-    let bothVirtual = outputTransport == "virtual" && inputTransport == "virtual"
-    if (sameDevice && (looped || inputTransport == "virtual")) || bothVirtual {
-      return .loopback
-    }
+    if sameDevice && (looped || inputTransport == "virtual") { return .loopback }
     return outputClass == .speakers ? .speaker : .unknown
   }
 

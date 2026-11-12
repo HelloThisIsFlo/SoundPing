@@ -149,20 +149,25 @@ private actor GlitchedWindowsBackend: AudioBackend {
     #expect(LevelRamp.classify(setup: onUSB, output: Self.duplex, input: usbMic) == .unknown)
   }
 
-  @Test func twoVirtualDevicesKeepTheOutputCeilingWhateverTheyAreReportedAs() throws {
+  @Test func twoVirtualDevicesAreNoLoopAndKeepTheOutputCeiling() throws {
     // CR-05: two virtual devices on two UIDs may be joined by a router SoundPing cannot read, or
-    // the output may monitor to headphones. They still pick the full-range chirp, but the ceiling
-    // is the output's -18 dBFS: no loop is ever allowed more without --max-level.
+    // the output may monitor to headphones. A loop counts only on one device, so they are the
+    // ordinary listener (speaker chirp band), and the ceiling is the output's -18 dBFS.
     var other = Self.duplex
     other.uid = "soundping-sim-other-virtual"
-    let setup = Self.setup(output: Self.duplex, input: other)
-    #expect(setup.output.uid != setup.input.uid)
-    #expect(LevelRamp.classify(setup: setup, output: Self.duplex, input: other) == .loopback)
-    let loudness = try LevelRamp.runLoudness(
-      setup: setup, output: Self.duplex, input: other, options: PreflightOptions())
-    #expect(loudness.ceilingDbfs == -18)
-    #expect(loudness.output == .other)
-    // The recorded transports are enough when the device list is unavailable.
+    for name in [nil, "Loop 1"] {
+      let setup = Self.setup(inChannelName: name, output: Self.duplex, input: other)
+      #expect(setup.output.uid != setup.input.uid)
+      #expect(LevelRamp.classify(setup: setup, output: Self.duplex, input: other) == .unknown)
+      let loudness = try LevelRamp.runLoudness(
+        setup: setup, output: Self.duplex, input: other, options: PreflightOptions())
+      #expect(loudness.kind == .unknown)
+      #expect(LevelRamp.templateId(for: loudness.kind) == "chirp-speaker")
+      #expect(loudness.ceilingDbfs == -18)
+      #expect(loudness.output == .other)
+    }
+    // The same virtual device as output and input is a loop; the recorded transports are enough
+    // when the device list is unavailable.
     let recorded = ResolvedSetup(
       output: Self.duplex.ref, input: Self.duplex.ref, outChannels: [1, 2], inChannel: 1)
     #expect(LevelRamp.classify(setup: recorded, output: nil, input: nil) == .loopback)
