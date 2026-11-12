@@ -177,17 +177,17 @@ findings:
     title: "`bench.sh` aborts on any run with zero valid hits"
 open: 0
 total: 43
-recorded: 2026-11-12T21:07:42.978Z
+recorded: 2026-11-12T21:36:56.322Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-05 | critical | fixed | 01-REVIEW-FIX.md |
-| WR-15 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-16 | warning | fixed | 01-REVIEW-FIX.md |
-| IN-22 | info | fixed | 01-REVIEW-FIX.md |
+| CR-05 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-15 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-16 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-22 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | CR-04 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-13 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-14 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
