@@ -81,6 +81,7 @@ struct PrettyRenderer {
     }
 
     if let selfTest = result.selfTest { lines.append(selfTestLine(selfTest)) }
+    lines.append(contentsOf: reportedVersusMeasured(result))
 
     let path = result.segments.map { Self.shortName(of: $0) }.joined(separator: " → ")
     lines.append("Segments: \(path)")
@@ -95,6 +96,51 @@ struct PrettyRenderer {
     String(
       format: "Clock self-test: %@ (median Δ %.2f, p95 |Δ| %.2f frames)",
       selfTest.pass ? "PASS" : "FAIL", selfTest.medianDeltaFrames, selfTest.p95AbsDeltaFrames)
+  }
+
+  /// What macOS says next to what was heard, so a mismatch shows which segment is off (RES-02).
+  /// The reported figures are information only: nothing here is subtracted from a measurement.
+  func reportedVersusMeasured(_ result: RunResult) -> [String] {
+    guard let reported = result.reported else { return [] }
+    let measured = result.measured
+    let rate = reported.sampleRate
+
+    func row(_ label: String, _ word: String, frames: Double, measured: StatValue?) -> String {
+      let ms = rate > 0 ? frames / rate * 1000 : 0
+      var line =
+        "  " + label.padded(to: 15)
+        + String(format: "%@ %7.2f frames %8.3f ms", word.padded(to: 8), frames, ms)
+      if let measured {
+        line += String(format: "   measured %7.2f frames %8.3f ms", measured.frames, measured.ms)
+      } else {
+        line += "   measured -"
+      }
+      return line
+    }
+
+    var lines = ["Reported vs measured"]
+    switch measured.domain {
+    case .sample:
+      lines.append(
+        row(
+          "path", "reported", frames: Double(reported.pathFrames), measured: measured.path?.median))
+      lines.append(
+        row(
+          "app round trip", "reported", frames: Double(reported.appRoundTripFrames),
+          measured: measured.appRoundTrip?.median))
+      lines.append(
+        row(
+          "Δio per buffer", "expected", frames: Double(reported.expectedIoOffsetFrames),
+          measured: measured.ioOffset?.median))
+      lines.append("  (expected Δio = both buffers + both safety offsets)")
+    case .host:
+      lines.append(
+        row(
+          "path (host)", "reported", frames: Double(reported.pathFrames),
+          measured: measured.path?.median))
+      lines.append("  (app round trip and Δio are defined for a single device only)")
+    }
+    return lines
   }
 
   private func statLine(_ label: String, _ value: StatValue?, note: String? = nil) -> String {

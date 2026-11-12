@@ -117,6 +117,14 @@ extension ResolvedSetup {
 
 /// A virtual-time `AudioBackend`: no CoreAudio, no wall clock. Frames "happen" when the
 /// coordinator waits on a sample position, so a 100-hit run takes milliseconds (ENG-05).
+///
+/// One virtual host clock stamps every callback. On a single device (the output and input UIDs of
+/// the setup are equal) output and input share their sample labels, as on a duplex interface: a
+/// hit played at output frame `F` arrives at input frame `F + latency`, and each callback's output
+/// label runs `ioOffsetFrames` ahead of its input label. With two different devices each keeps its
+/// own labels, starting at unrelated origins, and the input device's clock drifts by `driftPPM`
+/// against the host: only host time relates the two, the way it does for a MacBook's speakers and
+/// microphone.
 public actor SimulatedBackend: AudioBackend {
   public nonisolated let scenario: Scenario
   public nonisolated let events: AsyncStream<DeviceEvent>
@@ -126,11 +134,20 @@ public actor SimulatedBackend: AudioBackend {
   private var hits: [ScheduledHit] = []
   /// Input frame where each simulated xrun drops `xrunFrames` frames, ascending.
   private var xrunGaps: [Int64] = []
+  /// Input labels below this are captured (exclusive bound). Starts at the input origin.
   private var framesProcessed: Int64 = 0
   private var started = false
+  private var twoDevices = false
+  private var outputOrigin: Int64 = 0
+  private var inputOrigin: Int64 = 0
 
   /// How many input frames one simulated xrun loses.
   public static let xrunFrames: Int64 = 64
+
+  /// Where each device's sample labels start in two-device mode. Unrelated on purpose: a run that
+  /// assumed the two label spaces were one would find nothing.
+  static let twoDeviceOutputOrigin: Int64 = 96_000
+  static let twoDeviceInputOrigin: Int64 = 7_654_321
 
   // mach_timebase_info on Apple Silicon: nanoseconds = ticks * 125 / 3.
   public static let hostClock = HostClock(numer: 125, denom: 3)
@@ -153,9 +170,19 @@ public actor SimulatedBackend: AudioBackend {
       regenerated[template.id] = try template.atSampleRate(scenario.sampleRate)
     }
     self.templates = regenerated
+
+    twoDevices = setup.output.uid != setup.input.uid
+    outputOrigin = twoDevices ? Self.twoDeviceOutputOrigin : 0
+    inputOrigin = twoDevices ? Self.twoDeviceInputOrigin : 0
+    framesProcessed = inputOrigin
+
+    // The fixtures stand in for what the HAL would report; a device they do not know reports nothing.
+    let catalog = (try? SimulatedCatalog().listing().audio) ?? []
     return BackendInfo(
       sampleRate: scenario.sampleRate, bufferFrames: scenario.bufferFrames, simulation: scenario,
-      hostClock: Self.hostClock)
+      hostClock: Self.hostClock,
+      outputDevice: catalog.first { $0.uid == setup.output.uid },
+      inputDevice: catalog.first { $0.uid == setup.input.uid })
   }
 
   public func start() async throws {
@@ -163,6 +190,13 @@ public actor SimulatedBackend: AudioBackend {
   }
 
   public func currentOutputFrame() async -> Int64 {
+    guard twoDevices else { return framesProcessed }
+    // The output device's clock has run for as long as the input device's has, on the host clock.
+    let elapsedSeconds = Double(framesProcessed - inputOrigin) / inputLabelsPerHostSecond
+    return outputOrigin + Int64((elapsedSeconds * scenario.sampleRate).rounded())
+  }
+
+  public func currentInputFrame() async -> Int64 {
     framesProcessed
   }
 
@@ -199,9 +233,9 @@ public actor SimulatedBackend: AudioBackend {
     let xrun = Set(scenario.xrunHits)
     return hits.compactMap { hit -> Int64? in
       guard xrun.contains(hit.index), let template = templates[hit.templateId] else { return nil }
-      let start = Double(hit.outputFrame) + scenario.latencyFrames + jitter(forHit: hit.index)
-      let middle = start + Double(template.samples.count) / 2
-      return (Int64(middle.rounded(.up)) + buffer - 1) / buffer * buffer
+      let middle = arrivalFrame(of: hit) + Double(template.samples.count) / 2
+      let relative = Int64(middle.rounded(.up)) - inputOrigin
+      return inputOrigin + (relative + buffer - 1) / buffer * buffer
     }.sorted()
   }
 
@@ -211,7 +245,8 @@ public actor SimulatedBackend: AudioBackend {
     }
     guard throughInputFrame > framesProcessed else { return }
     let buffer = Int64(scenario.bufferFrames)
-    framesProcessed = (throughInputFrame + buffer - 1) / buffer * buffer
+    let relative = throughInputFrame - inputOrigin
+    framesProcessed = inputOrigin + (relative + buffer - 1) / buffer * buffer
   }
 
   public func capture(_ range: Range<Int64>) async throws -> [Float] {
@@ -238,15 +273,15 @@ public actor SimulatedBackend: AudioBackend {
     let missed = Set(scenario.missedHits)
     for hit in hits {
       guard !missed.contains(hit.index), let template = templates[hit.templateId] else { continue }
-      let start = Double(hit.outputFrame) + scenario.latencyFrames + jitter(forHit: hit.index)
-      let end = start + template.durationMs / 1000 * scenario.sampleRate
+      let start = arrivalFrame(of: hit)
+      let end = start + template.durationMs / 1000 * stimulusFramesPerSecond
       guard end > Double(range.lowerBound), start < Double(range.upperBound) else { continue }
       let first = Swift.max(range.lowerBound, Int64(start.rounded(.up)))
       let last = Swift.min(range.upperBound, Int64(end.rounded(.up)))
       guard first < last else { continue }
       let scale = Double(hit.gain) * pathGain
       for frame in first..<last {
-        let seconds = (Double(frame) - start) / scenario.sampleRate
+        let seconds = (Double(frame) - start) / stimulusFramesPerSecond
         out[Int(frame - range.lowerBound)] += Float(
           scale * Double(template.value(atSeconds: seconds)))
       }
@@ -267,11 +302,13 @@ public actor SimulatedBackend: AudioBackend {
   public func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
     guard !range.isEmpty else { return [] }
     let buffer = Int64(scenario.bufferFrames)
-    let firstBuffer = Swift.max(0, range.lowerBound) / buffer
-    let lastBuffer = Swift.min(range.upperBound, framesProcessed).advanced(by: -1) / buffer
+    let upper = Swift.min(range.upperBound, framesProcessed)
+    guard upper > inputOrigin else { return [] }
+    let firstBuffer = Swift.max(0, range.lowerBound - inputOrigin) / buffer
+    let lastBuffer = (upper - 1 - inputOrigin) / buffer
     guard firstBuffer <= lastBuffer else { return [] }
     return (firstBuffer...lastBuffer).map { index in
-      let frame = index * buffer
+      let frame = inputOrigin + index * buffer
       // After an xrun the device clock has run on: sample time jumps ahead of the frame count.
       let lost = Int64(xrunGaps.filter { $0 <= frame }.count) * Self.xrunFrames
       var stamp = callbackStamp(index: index)
@@ -280,9 +317,11 @@ public actor SimulatedBackend: AudioBackend {
     }
   }
 
+  /// Every callback so far. It ignores xruns: the log describes the clocks, and a lost-frames jump
+  /// belongs to `stamps(covering:)`, which exists to expose it.
   public func stampLog() async -> StampLog {
     let buffer = Int64(scenario.bufferFrames)
-    let callbacks = Int(framesProcessed / buffer)
+    let callbacks = Int(Swift.max(0, framesProcessed - inputOrigin) / buffer)
     var log = StampLog()
     log.input.reserveCapacity(callbacks)
     log.output.reserveCapacity(callbacks)
@@ -302,35 +341,71 @@ public actor SimulatedBackend: AudioBackend {
 
   public func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
 
-  /// The callback with this index, stamped from one virtual host clock. The label of a frame maps
-  /// to host time through the device's clock rate (drifted by `driftPPM`), so input and output
-  /// stamps of the same device agree unless `stampBiasFrames` skews the input ones.
+  public func stop() async {
+    started = false
+    eventContinuation.finish()
+  }
+
+  // MARK: - The virtual clocks
+
+  /// The input device's clock drift against the host. On a single device the one clock is shared by
+  /// both directions; with two, only the input device drifts and the output one is the reference.
+  private var inputDriftPPM: Double { scenario.driftPPM }
+  private var outputDriftPPM: Double { twoDevices ? 0 : scenario.driftPPM }
+
+  /// Input labels that pass per host second.
+  private var inputLabelsPerHostSecond: Double {
+    scenario.sampleRate * (1 + inputDriftPPM * 1e-6)
+  }
+
+  /// Input frames per second of stimulus. One shared device clock samples the stimulus exactly as
+  /// the output played it; a second, drifted clock samples it a little faster or slower.
+  private var stimulusFramesPerSecond: Double {
+    twoDevices ? inputLabelsPerHostSecond : scenario.sampleRate
+  }
+
+  /// The input frame where this hit's stimulus starts. Single device: the output frame plus the
+  /// path. Two devices: the same instant on the input device's own clock, which has its own origin
+  /// and runs `driftPPM` fast.
+  private func arrivalFrame(of hit: ScheduledHit) -> Double {
+    let path = scenario.latencyFrames + jitter(forHit: hit.index)
+    guard twoDevices else { return Double(hit.outputFrame) + path }
+    return Double(inputOrigin)
+      + (Double(hit.outputFrame - outputOrigin) + path) * (1 + inputDriftPPM * 1e-6)
+  }
+
+  /// The callback with this index, stamped from one virtual host clock. A label maps to host time
+  /// through its device's clock rate, so a duplex device's input and output stamps agree unless
+  /// `stampBiasFrames` skews the input ones. Output labels run `ioOffsetFrames` ahead of input labels.
   private func callbackStamp(index: Int64) -> CallbackStamp {
-    let frame = Double(index * Int64(scenario.bufferFrames))
-    let host = hostTicks(forLabel: frame)
+    let buffer = Int64(scenario.bufferFrames)
+    let inputLabel = inputOrigin + index * buffer
+    let outputLabel = outputOrigin + index * buffer + Int64(scenario.ioOffsetFrames)
     let bias = Self.hostClock.ticks(
       forFrames: scenario.stampBiasFrames, sampleRate: scenario.sampleRate)
-    let inputHost = UInt64(Swift.max(0, (Double(host) + bias).rounded()))
+    let inputHost = UInt64(
+      Swift.max(
+        0,
+        (Double(hostTicks(label: inputLabel, origin: inputOrigin, driftPPM: inputDriftPPM)) + bias)
+          .rounded()))
     return CallbackStamp(
-      inputSampleTime: frame, inputHostTime: inputHost, inputRateScalar: rateScalar,
-      outputSampleTime: frame, outputHostTime: host, outputRateScalar: rateScalar,
+      inputSampleTime: Double(inputLabel), inputHostTime: inputHost,
+      inputRateScalar: Self.rateScalar(driftPPM: inputDriftPPM),
+      outputSampleTime: Double(outputLabel),
+      outputHostTime: hostTicks(label: outputLabel, origin: outputOrigin, driftPPM: outputDriftPPM),
+      outputRateScalar: Self.rateScalar(driftPPM: outputDriftPPM),
       frames: scenario.bufferFrames)
   }
 
-  /// Host ticks at which the device's clock reads `label`.
-  private func hostTicks(forLabel label: Double) -> UInt64 {
-    let seconds = label / (scenario.sampleRate * (1 + scenario.driftPPM * 1e-6))
+  /// Host ticks at which a device whose labels start at `origin` reads `label`.
+  private func hostTicks(label: Int64, origin: Int64, driftPPM: Double) -> UInt64 {
+    let seconds = Double(label - origin) / (scenario.sampleRate * (1 + driftPPM * 1e-6))
     return Self.hostEpochTicks + Self.hostClock.nanosToWholeTicks(seconds * 1e9)
   }
 
   /// Apple's definition: actual host ticks per frame over the nominal ones. A clock that runs
   /// fast spends fewer ticks per frame.
-  private var rateScalar: Double { 1 / (1 + scenario.driftPPM * 1e-6) }
-
-  public func stop() async {
-    started = false
-    eventContinuation.finish()
-  }
+  private static func rateScalar(driftPPM: Double) -> Double { 1 / (1 + driftPPM * 1e-6) }
 
   /// Per-hit jitter, a Gaussian draw keyed by the seed and the hit index so it never depends on
   /// the order the coordinator asks in.

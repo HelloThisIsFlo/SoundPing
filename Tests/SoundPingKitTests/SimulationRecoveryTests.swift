@@ -21,6 +21,7 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
     try await inner.open(setup, templates: templates)
   }
   func start() async throws { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
   func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
   func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
   func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }

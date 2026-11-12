@@ -34,9 +34,10 @@ import Testing
     parameters.hits = hits
     let request = RunRequest(recipe: RecipeRegistry.roundTrip, parameters: parameters, setup: setup)
     var finished: RunResult?
-    for try await event in RunCoordinator(backend: SimulatedBackend(scenario: scenario), store: store)
-      .run(request)
-    {
+    for try await event in RunCoordinator(
+      backend: SimulatedBackend(scenario: scenario), store: store
+    )
+    .run(request) {
       if case .finished(let result) = event { finished = result }
     }
     return try #require(finished)
