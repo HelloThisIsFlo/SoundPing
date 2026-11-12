@@ -45,16 +45,32 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 10 plans
 
 Plans:
+**Wave 1**
 - [ ] 01-01-PLAN.md — Licensed, buildable repo: PolyForm Shield LICENSE first, SwiftPM scaffold + CI, CLA (Flo picks fill-ins), CONTRIBUTING, README
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02-PLAN.md — Walking skeleton: `soundping run round-trip --simulate --json` → run.json, seeded spacing + warm-ups, CI on every push
-- [ ] 01-03-PLAN.md — Live output for agents and humans: `--ndjson`, pretty TTY (hits, histogram, sparkline), error envelope + exit codes
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-04-PLAN.md — Detector and stats rigor: named rejections, first-peak/PSR/confidence, chirp bands + click + down-sweeps, numpy-matched stats
-- [ ] 01-05-PLAN.md — Devices and selection: `devices`/`recipes`/`paths`, one resolver + named setups, no implicit defaults, reported-latency math
-- [ ] 01-06-PLAN.md — The trustworthy number (simulated): host-clock self-test + `selftest clock`, measured vs reported, two-device host path, calibrations
-- [ ] 01-07-PLAN.md — Real hardware round trip: raw HAL IOProc (`@_noLocks`), per-process buffer, abort on device change
-- [ ] 01-08-PLAN.md — Preflight: mic permission naming the owning app, level ramp + lock, silent/clipping/ceiling/muted causes, `--in-channel auto`
-- [ ] 01-09-PLAN.md — Bench exit gate: repeatability + clock self-test on the Scarlett, Flo picks the headline value, licence wording sweep
 - [ ] 01-10-PLAN.md — Run store (wave 3, split from 01-02): labels/tags, collision-safe run folders, run lock, `runs list/show`, contract tests
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 01-03-PLAN.md — Live output for agents and humans: `--ndjson`, pretty TTY (hits, histogram, sparkline), error envelope + exit codes
+- [ ] 01-05-PLAN.md — Devices and selection: `devices`/`recipes`/`paths`, one resolver + named setups, no implicit defaults, reported-latency math
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 01-06-PLAN.md — The trustworthy number (simulated): host-clock self-test + `selftest clock`, measured vs reported, two-device host path, calibrations
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 01-07-PLAN.md — Real hardware round trip: raw HAL IOProc (`@_noLocks`), per-process buffer, abort on device change
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 01-08-PLAN.md — Preflight: mic permission naming the owning app, level ramp + lock, silent/clipping/ceiling/muted causes, `--in-channel auto`
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 01-09-PLAN.md — Bench exit gate: repeatability + clock self-test on the Scarlett, Flo picks the headline value, licence wording sweep
+
 **Notes**: Research flag: HAL timestamp edge, safety-offset arithmetic and real-time safety need on-hardware spikes. Drift checks for two-device recipes arrive in Phase 3 (CAL-04).
 
 ### Phase 2: Tool-Sent MIDI
