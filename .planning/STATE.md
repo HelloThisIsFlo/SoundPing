@@ -68,7 +68,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- [2026-11-12] [general] Attribute runs to the real output route — [todo file](.planning/todos/pending/2026-11-12-attribute-runs-to-the-real-output-route.md) — Needs Three layers, simplest first (from a discussion with Flo, 2026-11-12):.
 
 ### Blockers/Concerns
 
