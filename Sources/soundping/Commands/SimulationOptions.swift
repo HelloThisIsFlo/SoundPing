@@ -110,6 +110,14 @@ struct SimulationOptions: ParsableArguments {
         "--sim-permission takes authorized, denied or restricted; got '\(simPermission)'",
         context: ["parameter": "sim-permission", "value": simPermission])
     }
+    // These are developer and CI flags, but the CLI contract is a named usage error, never a
+    // crash: a huge or non-finite value would trap in the simulator's frame arithmetic.
+    try Self.require(simLatency, "sim-latency", in: -48_000...480_000, unit: "frames")
+    try Self.require(simJitter, "sim-jitter", in: 0...48_000, unit: "frames")
+    try Self.require(simNoise, "sim-noise", in: 0...1, unit: "RMS")
+    try Self.require(simGainDb, "sim-gain-db", in: -300...300, unit: "dB")
+    try Self.require(simDriftPpm, "sim-drift-ppm", in: -10_000...10_000, unit: "ppm")
+    try Self.require(simStampBias, "sim-stamp-bias", in: -10_000...10_000, unit: "frames")
     return Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
       pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
@@ -117,5 +125,16 @@ struct SimulationOptions: ParsableArguments {
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
       faults: try simFault.map(Fault.parse), permission: permission, inputZeros: simInputZeros,
       outputMuted: simMuted, loopChannel: simLoopChannel, seed: seed)
+  }
+
+  private static func require(
+    _ value: Double, _ flag: String, in range: ClosedRange<Double>, unit: String
+  ) throws {
+    guard value.isFinite, range.contains(value) else {
+      throw SoundPingError.usage(
+        "invalidParameters",
+        "--\(flag) must be a finite number from \(range.lowerBound) to \(range.upperBound) \(unit), got \(value)",
+        context: ["parameter": flag, "value": String(value)])
+    }
   }
 }
