@@ -110,6 +110,19 @@ private actor LateEventBackend: AudioBackend {
     }
   }
 
+  // MARK: Every named failure is announced on the stream
+
+  @Test func aRefusedRunIsAnnouncedOnTheStreamBeforeItThrows() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    let outcome = await Self.run(
+      SimulatedBackend(scenario: Scenario(jitterFrames: 0, seed: 5)), hits: 0, store: store)
+
+    #expect(outcome.error?.code == "invalidParameters")
+    #expect(Self.abortCodes(outcome.events) == ["invalidParameters"])
+    #expect(!Self.hasFinished(outcome.events))
+  }
+
   // MARK: Device changes abort with a named cause
 
   @Test func aSampleRateChangeAtHitThirtyAbortsTheRun() async throws {

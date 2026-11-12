@@ -66,7 +66,23 @@ private struct Session: Sendable {
   let resolver: any ResponsibleAppResolving
   let continuation: AsyncThrowingStream<RunEvent, Error>.Continuation
 
+  /// Every failure of the run is announced once on the stream as `.aborted`, then thrown, so a
+  /// reader of the stream alone sees why it ended (D-03). A cancelled run stays silent.
   func run() async throws {
+    do {
+      try await execute()
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as SoundPingError {
+      continuation.yield(.aborted(error))
+      throw error
+    } catch {
+      continuation.yield(.aborted(SoundPingError.internalFailure("internal", "\(error)")))
+      throw error
+    }
+  }
+
+  private func execute() async throws {
     let parameters = request.parameters
     let nominals = try candidateTemplates()
     try HitScheduler.validate(parameters, templateDurationMs: nominals[0].durationMs)
@@ -96,34 +112,24 @@ private struct Session: Sendable {
     return try ids.map { try StimulusLibrary.template(id: $0, sampleRate: 48_000) }
   }
 
-  /// A named failure is announced on the stream, then thrown.
-  private func fail(_ error: SoundPingError) -> SoundPingError {
-    continuation.yield(.aborted(error))
-    return error
-  }
-
   /// The checks before any sound is played, in their fixed order: microphone permission, then the
   /// output's mute and volume. The level ramp is the third check and runs once the audio is going.
   private func preflight(info: BackendInfo) async throws -> PreflightPlan {
     let checks = Preflight(resolver: resolver)
-    do {
-      let permission = try await checks.checkPermission(on: backend)
-      try await checks.checkOutput(on: backend)
-      let listener =
-        request.preflight.listener
-        ?? LevelRamp.classify(
-          setup: request.setup, output: info.outputDevice, input: info.inputDevice)
-      let ceiling = try LevelRamp.resolveCeiling(
-        kind: listener, maxLevelDbfs: request.preflight.maxLevelDbfs)
-      let templateId =
-        request.preflight.templateFollowsListener
-        ? LevelRamp.templateId(for: listener) : request.parameters.templateId
-      return PreflightPlan(
-        permission: permission, listener: listener, ceilingDbfs: ceiling, templateId: templateId,
-        warnings: [])
-    } catch let error as SoundPingError {
-      throw fail(error)
-    }
+    let permission = try await checks.checkPermission(on: backend)
+    try await checks.checkOutput(on: backend)
+    let listener =
+      request.preflight.listener
+      ?? LevelRamp.classify(
+        setup: request.setup, output: info.outputDevice, input: info.inputDevice)
+    let ceiling = try LevelRamp.resolveCeiling(
+      kind: listener, maxLevelDbfs: request.preflight.maxLevelDbfs)
+    let templateId =
+      request.preflight.templateFollowsListener
+      ? LevelRamp.templateId(for: listener) : request.parameters.templateId
+    return PreflightPlan(
+      permission: permission, listener: listener, ceilingDbfs: ceiling, templateId: templateId,
+      warnings: [])
   }
 
   /// Measures while listening for device events; a device change aborts the run (ENG-07).
@@ -132,7 +138,6 @@ private struct Session: Sendable {
   {
     let monitor = FaultMonitor()
     let backend = self.backend
-    let continuation = self.continuation
     return try await withThrowingTaskGroup(of: Outcome.self) { group in
       group.addTask {
         for await event in backend.events {
@@ -140,9 +145,7 @@ private struct Session: Sendable {
             monitor.recordOverload(atInputFrame: frame)
             continue
           }
-          let error = Session.abortError(for: event)
-          continuation.yield(.aborted(error))
-          throw error
+          throw Session.abortError(for: event)
         }
         return .eventsEnded
       }
@@ -317,7 +320,7 @@ private struct Session: Sendable {
     while true {
       try Task.checkCancellation()
       let played = try await player.play(atLevel: level, using: &listener)
-      if played.silent { throw fail(await silenceError()) }
+      if played.silent { throw await silenceError() }
       probes.append(played.record)
       continuation.yield(.probe(played.record))
 
@@ -330,13 +333,11 @@ private struct Session: Sendable {
         if let warning { warnings.append(warning) }
         return LockedLevel(levelDbfs: locked, probes: probes, warnings: warnings)
       case .fail(.clipping):
-        throw fail(
-          Preflight.clippingError(peakDbfs: played.record.peakDbfs, levelDbfs: level))
+        throw Preflight.clippingError(peakDbfs: played.record.peakDbfs, levelDbfs: level)
       case .fail(.nothingHeard):
-        throw fail(
-          Preflight.nothingHeardError(
-            ceilingDbfs: plan.ceilingDbfs, listener: plan.listener, probes: probes.count,
-            chosenLevel: fixed, terminalApp: plan.permission.app.name))
+        throw Preflight.nothingHeardError(
+          ceilingDbfs: plan.ceilingDbfs, listener: plan.listener, probes: probes.count,
+          chosenLevel: fixed, terminalApp: plan.permission.app.name)
       }
     }
   }
