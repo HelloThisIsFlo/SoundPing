@@ -20,14 +20,19 @@ struct RunCommand: AsyncParsableCommand {
   }
 
   func run() async throws {
-    try await withErrorReporting(jsonMode: output.json) {
+    try await withErrorReporting(jsonMode: output.isDataMode) {
       let recipe = try RecipeRegistry.recipe(id: recipe)
       let store = try options.makeStore()
       let (backend, setup) = try options.makeBackend(simulation: simulation)
       let request = try options.makeRequest(recipe: recipe, setup: setup)
 
+      let ndjson = NDJSONRenderer()
       var finished: RunResult?
       for try await event in RunCoordinator(backend: backend, store: store).run(request) {
+        if output.ndjson { try ndjson.write(event) }
+        if output.isDataMode, let progress = Self.progress(for: event) {
+          Output.progressLine(progress)
+        }
         if case .finished(let result) = event { finished = result }
       }
       guard let result = finished else {
@@ -36,9 +41,23 @@ struct RunCommand: AsyncParsableCommand {
 
       if output.json {
         try JSONRenderer.write(result)
-      } else {
-        print(Self.summaryLine(for: result))
+      } else if !output.ndjson {
+        Output.writeLine(Self.summaryLine(for: result))
       }
+    }
+  }
+
+  /// A short stderr line per hit for a person watching a data-mode run.
+  private static func progress(for event: RunEvent) -> String? {
+    switch event {
+    case .hit(let record):
+      let frames = record.latencyFrames.map { String(format: "%.2f frames", $0) } ?? "-"
+      return "hit \(record.index) (\(record.phase.rawValue)): \(frames)"
+    case .rejected(let record):
+      return
+        "hit \(record.index) (\(record.phase.rawValue)): rejected \(record.rejection?.rawValue ?? "unknown")"
+    default:
+      return nil
     }
   }
 
