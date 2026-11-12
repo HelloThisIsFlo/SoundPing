@@ -196,13 +196,6 @@ public final class HALBackend: AudioBackend {
     return info
   }
 
-  /// A check before the run failed (exit 65).
-  private static func preflight(_ code: String, _ detail: String, context: [String: String] = [:])
-    -> SoundPingError
-  {
-    SoundPingError(kind: .preflight, code: code, detail: detail, context: context)
-  }
-
   private static func find(_ ref: DeviceRef, in listing: DevicesListing, role: String) throws
     -> DeviceInfo
   {
@@ -283,7 +276,7 @@ public final class HALBackend: AudioBackend {
       let status = AudioObjectSetPropertyData(
         device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
       guard status == noErr else {
-        throw Self.preflight(
+        throw SoundPingError.preflight(
           "bufferSizeNotApplied",
           "\(name) refused a buffer size of \(requested) frames (HAL status \(status))",
           context: ["device": name, "requested": String(requested)])
@@ -294,7 +287,7 @@ public final class HALBackend: AudioBackend {
         device, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
       applied > 0
     else {
-      throw Self.preflight(
+      throw SoundPingError.preflight(
         "bufferSizeUnknown", "could not read the buffer size of \(name)",
         context: ["device": name])
     }
@@ -314,7 +307,7 @@ public final class HALBackend: AudioBackend {
       if hasOutputs { ioCycleOutput(rt, outputData, outputTime, isOutputDevice: plays) }
     }
     guard status == noErr, procID != nil else {
-      throw Self.preflight(
+      throw SoundPingError.preflight(
         "ioProcFailed", "could not create an audio callback on '\(uid)' (HAL status \(status))",
         context: ["device": uid])
     }
@@ -342,7 +335,7 @@ public final class HALBackend: AudioBackend {
     for (position, device) in devices.enumerated() {
       let status = AudioDeviceStart(device.id, device.procID)
       guard status == noErr else {
-        throw Self.preflight(
+        throw SoundPingError.preflight(
           "deviceStartFailed", "could not start audio on '\(device.uid)' (HAL status \(status))",
           context: ["device": device.uid])
       }
