@@ -3,6 +3,22 @@ phase: 01
 review: 01-REVIEW.md
 titles: json
 findings:
+  - id: CR-05
+    severity: critical
+    disposition: open
+    title: "Two unrelated virtual devices count as \"a loop SoundPing can see\": a monitored virtual output can ramp to -6 dBFS into headphones"
+  - id: WR-15
+    severity: warning
+    disposition: open
+    title: "The channel probe keeps the first channel's ceiling but re-baselines route watching on every reopen, so a route change between channels is never reported"
+  - id: WR-16
+    severity: warning
+    disposition: open
+    title: "A `--level` above the ceiling that hears nothing reports the requested level, not the clamped level that was played"
+  - id: IN-22
+    severity: info
+    disposition: open
+    title: "The loudness invariant cannot catch a drift in the transport strings the classifier keys on"
   - id: CR-04
     severity: critical
     disposition: fixed
@@ -159,25 +175,29 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-open: 0
-total: 39
-recorded: 2026-11-12T20:32:02.991Z
+open: 4
+total: 43
+recorded: 2026-11-12T20:43:25.911Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-04 | critical | fixed | 01-REVIEW-FIX.md |
-| WR-13 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-14 | warning | fixed | 01-REVIEW-FIX.md |
-| IN-15 | info | fixed | 01-REVIEW-FIX.md |
-| IN-16 | info | fixed | 01-REVIEW-FIX.md |
-| IN-17 | info | fixed | 01-REVIEW-FIX.md |
-| IN-18 | info | fixed | 01-REVIEW-FIX.md |
-| IN-19 | info | fixed | 01-REVIEW-FIX.md |
-| IN-20 | info | fixed | 01-REVIEW-FIX.md |
-| IN-21 | info | fixed | 01-REVIEW-FIX.md |
+| CR-05 | critical | open | - |
+| WR-15 | warning | open | - |
+| WR-16 | warning | open | - |
+| IN-22 | info | open | - |
+| CR-04 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-13 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-14 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-15 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-16 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-17 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-18 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-19 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-20 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-21 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | CR-03 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-01 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-03 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
