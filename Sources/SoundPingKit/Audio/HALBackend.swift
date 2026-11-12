@@ -108,8 +108,11 @@ public final class HALBackend: AudioBackend {
 
     let outID = try Self.deviceID(forUID: outInfo.uid)
     let inID = try Self.deviceID(forUID: inInfo.uid)
-    try Self.requireFloat32(outID, scope: kAudioObjectPropertyScopeOutput, name: outInfo.name)
-    try Self.requireFloat32(inID, scope: kAudioObjectPropertyScopeInput, name: inInfo.name)
+    try Self.requireFloat32(
+      outID, scope: kAudioObjectPropertyScopeOutput, name: outInfo.name,
+      buffers: outSlots.map(\.buffer))
+    try Self.requireFloat32(
+      inID, scope: kAudioObjectPropertyScopeInput, name: inInfo.name, buffers: [inSlot.buffer])
 
     // SoundPing's own buffer size, per process; the HAL may clamp it, each device to its own range.
     // What the HAL reports back is what the run records, per device (the DAW's buffer is a
@@ -220,25 +223,36 @@ public final class HALBackend: AudioBackend {
     return id
   }
 
-  /// The callbacks hand over raw Float32 samples; anything else would be read as noise.
+  /// The callbacks hand over raw Float32 samples; anything else would be read as noise. Every
+  /// stream (buffer) a selected channel sits in is checked, not just the first of the scope: a
+  /// multi-stream device can carry a channel in a later stream with another format. A stream whose
+  /// format cannot be read is refused too, rather than assumed to be Float32.
   private static func requireFloat32(
-    _ device: AudioDeviceID, scope: AudioObjectPropertyScope, name: String
+    _ device: AudioDeviceID, scope: AudioObjectPropertyScope, name: String, buffers: [Int]
   ) throws {
     let streams = HALProperty.array(
       device, kAudioDevicePropertyStreams, scope: scope, of: AudioStreamID.self,
       initial: AudioStreamID(0))
-    guard let stream = streams.first,
-      let format = HALProperty.get(
-        stream, kAudioStreamPropertyVirtualFormat, initial: AudioStreamBasicDescription())
-    else { return }
-    let isFloat32 =
-      format.mFormatID == kAudioFormatLinearPCM
-      && (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && format.mBitsPerChannel == 32
-    guard isFloat32 else {
-      throw SoundPingError.usage(
-        "unsupportedStreamFormat",
-        "\(name) delivers \(format.mBitsPerChannel)-bit samples (format flags \(format.mFormatFlags)); SoundPing reads 32-bit float streams only",
-        context: ["device": name])
+    for buffer in Set(buffers).sorted() {
+      guard streams.indices.contains(buffer),
+        let format = HALProperty.get(
+          streams[buffer], kAudioStreamPropertyVirtualFormat,
+          initial: AudioStreamBasicDescription())
+      else {
+        throw SoundPingError.usage(
+          "unsupportedStreamFormat",
+          "could not read the sample format of stream \(buffer + 1) of \(name); SoundPing reads 32-bit float streams only",
+          context: ["device": name, "stream": String(buffer + 1)])
+      }
+      let isFloat32 =
+        format.mFormatID == kAudioFormatLinearPCM
+        && (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && format.mBitsPerChannel == 32
+      guard isFloat32 else {
+        throw SoundPingError.usage(
+          "unsupportedStreamFormat",
+          "\(name) delivers \(format.mBitsPerChannel)-bit samples on stream \(buffer + 1) (format flags \(format.mFormatFlags)); SoundPing reads 32-bit float streams only",
+          context: ["device": name, "stream": String(buffer + 1)])
+      }
     }
   }
 
