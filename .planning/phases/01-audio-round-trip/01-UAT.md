@@ -29,7 +29,7 @@ expected: Named abort, exit 75, no run saved as a valid result
 result: [pending]
 
 ### 4. Listening check on MacBook speakers and on headphones
-expected: The level ramp (starts -48 dBFS, ceilings loopback -6 / speaker -12 / headphones -30) is comfortable and never painful. The bench saw the speaker ramp reach -12 dBFS three times before aborting
+expected: The level ramp (starts -48 dBFS; the ceiling comes from the output alone: built-in speakers -12 / headphones and Bluetooth -30 / everything else -18, loops included; the `--in-channel auto` probe uses the same ceilings) is comfortable and never painful. The bench saw the speaker ramp reach -12 dBFS three times before aborting
 result: [pending]
 
 ### 5. Ableton open at buffer 256 while SoundPing runs at 128 (RESEARCH A7)
@@ -44,12 +44,16 @@ result: [pending]
 expected: At least one acoustic path (external mic, or a template tuned for the MacBook speakers -> built-in mic) produces valid hits and a number
 result: [pending]
 
+### 8. Scarlett Loop 1 locks at or below -18 dBFS without --max-level
+expected: `just hw-test` on the Scarlett `Loop 1` round trip locks its level at or below -18 dBFS (the ceiling for an interface; no loop gets a louder one) without `--max-level`, and both runs produce valid hits
+result: [pending]
+
 ## Summary
 
-total: 7
+total: 8
 passed: 0
 issues: 0
-pending: 7
+pending: 8
 skipped: 0
 blocked: 0
 
