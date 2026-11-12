@@ -75,10 +75,11 @@ struct SimulationOptions: ParsableArguments {
   )
   var simStampBias: Double = 0
 
-  func scenario(seed: UInt64) -> Scenario {
+  func scenario(seed: UInt64, bufferFrames: Int = 128) -> Scenario {
     Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
-      pathGainDb: simGainDb, missedHits: simMiss.values, xrunHits: simXrun.values,
+      pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
+      xrunHits: simXrun.values,
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias, seed: seed)
   }
 }

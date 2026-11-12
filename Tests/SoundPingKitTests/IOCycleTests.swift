@@ -184,7 +184,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
     ioCycleOutput(rt, out.pointer, &t2, isOutputDevice: true)
 
     #expect(rt.outputStamps.count == 2)
-    let second = try #require(rt.outputStamps.point(at: 1))
+    let secondPoint = rt.outputStamps.point(at: 1)
+    let second = try #require(secondPoint)
     #expect(second.sampleTime == 2016 && second.hostTime == 888 && second.frames == 16)
     #expect(second.rateScalar == 1.00003)
     #expect(rt.outputNextLabel.load(ordering: .relaxed) == 2032)
@@ -223,7 +224,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
     ioCycleInput(rt, input.pointer, &t1)
 
     #expect(rt.inputStamps.count == 1)
-    let point = try #require(rt.inputStamps.point(at: 0))
+    let firstPoint = rt.inputStamps.point(at: 0)
+    let point = try #require(firstPoint)
     #expect(point.sampleTime == 100 && point.hostTime == 12_345)
     #expect(point.rateScalar == 0.99999 && point.frames == 16)
     #expect(rt.stampLog().input == [point])
@@ -294,5 +296,61 @@ private func scope(streams: [Int]) -> ScopeInfo {
     #expect(rt.templateCount == 2)
     #expect(rt.templateOffsets[1] == 3 && rt.templateLengths[0] == 3 && rt.templateLengths[1] == 2)
     #expect(rt.templateData[3] == 9)
+  }
+
+  // MARK: Source rules (T-01-23, T-01-25)
+
+  private static let sourcesFolder = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Sources", isDirectory: true)
+
+  /// Every Swift file under Sources with its non-comment lines.
+  private static func sourceLines() throws -> [(file: String, line: String)] {
+    var found: [(String, String)] = []
+    let enumerator = try #require(
+      FileManager.default.enumerator(at: sourcesFolder, includingPropertiesForKeys: nil))
+    for case let url as URL in enumerator where url.pathExtension == "swift" {
+      let relative = String(url.path.dropFirst(sourcesFolder.path.count + 1))
+      for line in try String(contentsOf: url, encoding: .utf8).split(separator: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if !trimmed.hasPrefix("//") { found.append((relative, trimmed)) }
+      }
+    }
+    return found
+  }
+
+  @Test func theOnlyDevicePropertyEverSetIsSoundPingsOwnBufferSize() throws {
+    let lines = try Self.sourceLines()
+    let setters = lines.filter {
+      $0.line.contains("SetPropertyData") || $0.line.contains("AudioDeviceSetProperty")
+        || $0.line.contains("AudioHardwareSetProperty")
+    }
+    // One call site, in the HAL backend, and its address is the buffer frame size.
+    #expect(setters.count == 1, "set-property call sites: \(setters.map(\.file))")
+    #expect(setters.first?.file == "SoundPingKit/Audio/HALBackend.swift")
+    let backend = try String(
+      contentsOf: Self.sourcesFolder.appendingPathComponent("SoundPingKit/Audio/HALBackend.swift"),
+      encoding: .utf8)
+    let call = try #require(backend.range(of: "AudioObjectSetPropertyData("))
+    let before = backend[..<call.lowerBound].suffix(400)
+    #expect(before.contains("HALProperty.address(kAudioDevicePropertyBufferFrameSize)"))
+    // No other write path to the rate, volume, mute or defaults exists.
+    for forbidden in [
+      "kAudioDevicePropertyNominalSampleRate = ", "kAudioHardwarePropertyDefaultOutputDevice,",
+    ] {
+      #expect(!lines.contains { $0.line.contains("Set") && $0.line.contains(forbidden) })
+    }
+  }
+
+  @Test func onlyTheAudioFolderTouchesCoreAudio() throws {
+    let lines = try Self.sourceLines()
+    let importers = Set(lines.filter { $0.line == "import CoreAudio" }.map(\.file))
+    #expect(!importers.isEmpty)
+    #expect(importers.allSatisfy { $0.hasPrefix("SoundPingKit/Audio/") }, "\(importers.sorted())")
+    // The real-time file stays free of anything that suspends, spawns work or logs.
+    let cycle = lines.filter { $0.file == "SoundPingKit/Audio/IOCycle.swift" }.map(\.line)
+    for forbidden in ["print(", "await ", "async ", "Task {", "Task(", "DispatchQueue", "NSLock", ".withLock"] {
+      #expect(!cycle.contains { $0.contains(forbidden) }, "IOCycle.swift contains '\(forbidden)'")
+    }
   }
 }

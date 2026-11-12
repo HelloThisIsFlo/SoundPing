@@ -64,6 +64,12 @@ struct RunOptions: ParsableArguments {
   var outChannels: String?
 
   @Option(
+    help:
+      "SoundPing's own audio buffer size in frames (e.g. 128). Applied to this process only, clamped to what the device allows, and recorded as applied. Default: whatever the device gives this process."
+  )
+  var buffer: Int?
+
+  @Option(
     parsing: .unconditional,
     help:
       "MIDI destination: its unique ID (may be negative, e.g. -823739469) or its name."
@@ -93,21 +99,27 @@ struct RunOptions: ParsableArguments {
   }
 
   /// The device side of the run. Selectors are resolved first, so a bad device or channel is
-  /// reported before anything else; hardware itself arrives with the HAL backend, until then only
-  /// the simulator is available.
+  /// reported before anything else. Without `--simulate` the run goes to the real devices through
+  /// the HAL backend.
   func makeBackend(simulation: SimulationOptions) throws -> (
     backend: any AudioBackend, setup: ResolvedSetup
   ) {
-    let setup = try resolveSetup(simulated: simulation.simulate)
-    guard simulation.simulate else {
-      throw SoundPingError.usage(
-        "hardwareBackendUnavailable",
-        "hardware runs are not available in this build yet; use --simulate")
+    var setup = try resolveSetup(simulated: simulation.simulate)
+    if let buffer {
+      guard (1...16_384).contains(buffer) else {
+        throw SoundPingError.usage(
+          "invalidParameters", "--buffer must be between 1 and 16384 frames, got \(buffer)",
+          context: ["parameter": "buffer", "value": String(buffer)])
+      }
+      setup.requestedBufferFrames = buffer
     }
+    guard simulation.simulate else { return (HALBackend(), setup) }
     guard let seed else {
       throw SoundPingError.internalFailure("seedNotPinned", "the run seed was never drawn")
     }
-    return (SimulatedBackend(scenario: simulation.scenario(seed: seed)), setup)
+    return (
+      SimulatedBackend(scenario: simulation.scenario(seed: seed, bufferFrames: buffer ?? 128)), setup
+    )
   }
 
   /// Turns the device flags and `--setup` into a `ResolvedSetup`, prints each warning to stderr

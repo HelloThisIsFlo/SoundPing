@@ -16,6 +16,10 @@ cli *ARGS:
 sim *ARGS:
     scripts/cli.sh run round-trip --simulate {{ARGS}}
 
+# Run the tests that need real audio hardware (a loop from the interface's output back to an input)
+hw-test:
+    SOUNDPING_HW=1 swift test --filter Hardware
+
 # Format Sources and Tests in place
 fmt:
     swift format --in-place --recursive Sources Tests

@@ -32,8 +32,9 @@ struct ScheduleEntry: Sendable {
 /// A fixed-size ring of callback timestamps for one direction of one device. One writer (that
 /// direction's IOProc), any number of readers; the count is published with a releasing store after
 /// the entry is written. The columns come from `calloc`, so pages nobody touched stay virtual: a
-/// ring sized for hours costs memory only for the callbacks that actually happened.
-final class StampRing: Sendable {
+/// ring sized for hours costs memory only for the callbacks that actually happened. A noncopyable
+/// struct stored inline in `RTState`, so the audio thread reaches it without reference counting.
+struct StampRing: ~Copyable, Sendable {
   let capacity: Int
   nonisolated(unsafe) private let sampleTimes: UnsafeMutablePointer<Double>
   nonisolated(unsafe) private let hostTimes: UnsafeMutablePointer<UInt64>
