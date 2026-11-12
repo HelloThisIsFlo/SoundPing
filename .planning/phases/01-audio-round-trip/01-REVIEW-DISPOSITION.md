@@ -5,23 +5,23 @@ titles: json
 findings:
   - id: CR-01
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "`--level` accepts NaN and ±inf. NaN bypasses the ceiling and plays NaN samples; inf throws away a finished run"
   - id: CR-02
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "`--in-channel auto` ignores the headphone ceiling and probes up to -18 dBFS into known headphones"
   - id: WR-01
     severity: warning
-    disposition: open
+    disposition: skipped
     title: "Overload rejection is racy and checks a single frame, not the lost interval"
   - id: WR-02
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Calibration and self-test records are written before run.json, so a failed write orphans them"
   - id: WR-03
     severity: warning
-    disposition: open
+    disposition: skipped
     title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
   - id: WR-04
     severity: warning
@@ -29,19 +29,19 @@ findings:
     title: "Two-device runs record only the input device's buffer size"
   - id: WR-05
     severity: warning
-    disposition: open
+    disposition: skipped
     title: "A buffer size that settles at start always aborts the run, though the comment says the run adopts it"
   - id: WR-06
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "Interactive save of the probed channel can write it into a setup with a different input device"
   - id: WR-07
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "The `.aborted` event covers only some failures, so the stream contract is inconsistent"
   - id: WR-08
     severity: warning
-    disposition: open
+    disposition: skipped
     title: "Bluetooth (and USB headset) outputs get the -18 dBFS \"unknown\" ceiling"
   - id: WR-09
     severity: warning
@@ -91,25 +91,25 @@ findings:
     severity: info
     disposition: open
     title: "`HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it"
-open: 18
+open: 9
 total: 22
-recorded: 2026-11-12T16:27:13.935Z
+recorded: 2026-11-12T16:27:26.644Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | open | - |
-| CR-02 | critical | open | - |
-| WR-01 | warning | open | - |
-| WR-02 | warning | open | - |
-| WR-03 | warning | open | - |
+| CR-01 | critical | fixed | 01-REVIEW-FIX.md |
+| CR-02 | critical | fixed | 01-REVIEW-FIX.md |
+| WR-01 | warning | skipped | 01-REVIEW-FIX.md |
+| WR-02 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-03 | warning | skipped | 01-REVIEW-FIX.md |
 | WR-04 | warning | skipped | 01-REVIEW-FIX.md |
-| WR-05 | warning | open | - |
-| WR-06 | warning | open | - |
-| WR-07 | warning | open | - |
-| WR-08 | warning | open | - |
+| WR-05 | warning | skipped | 01-REVIEW-FIX.md |
+| WR-06 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-07 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-08 | warning | skipped | 01-REVIEW-FIX.md |
 | WR-09 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-10 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-11 | warning | fixed | 01-REVIEW-FIX.md |
