@@ -5,7 +5,7 @@ titles: json
 findings:
   - id: CR-03
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "A virtual or \"Loop\" input overrides the headphone ceiling: the ramp can reach -6 dBFS in headphones (external: codex)"
   - id: WR-01
     severity: warning
@@ -17,35 +17,35 @@ findings:
     title: "The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs"
   - id: IN-02
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "The same-device window has no pre-roll, so a near-zero path is rejected as `outsideWindow`"
   - id: WR-12
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "A built-in output without a readable `hdpn` data source gets the speaker ceiling: the classifier fails open"
   - id: IN-01
     severity: info
-    disposition: open
+    disposition: fixed
     title: "A probe rejected for an overload or a discontinuity counts as \"not heard\", so the ramp climbs 6 dB"
   - id: IN-03
     severity: info
-    disposition: open
+    disposition: fixed
     title: "`requireFloat32` checks only the first stream of a scope"
   - id: IN-04
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Doc comments contradict the code"
   - id: IN-05
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Dead code and an unused dependency"
   - id: IN-06
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Duplicated logic"
   - id: IN-07
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Several stdout writes bypass `Output`'s guarded write"
   - id: IN-08
     severity: info
@@ -53,27 +53,27 @@ findings:
     title: "The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`"
   - id: IN-09
     severity: info
-    disposition: open
+    disposition: fixed
     title: "`HALBackend` is not reusable after `stop()`, though ChannelProbe reopens it"
   - id: IN-10
     severity: info
-    disposition: open
+    disposition: fixed
     title: "`--in-channel auto` ignores device changes while it probes (external: codex)"
   - id: IN-11
     severity: info
-    disposition: open
+    disposition: fixed
     title: "`RunParameters.minValidFraction` is never validated (external: codex)"
   - id: IN-12
     severity: info
-    disposition: open
+    disposition: fixed
     title: "Simulation flags are not range-checked and can trap the process (external: codex)"
   - id: IN-13
     severity: info
-    disposition: open
+    disposition: fixed
     title: "A side-file write failure after run.json turns a saved run into a reported failure (WR-02 residual)"
   - id: IN-14
     severity: info
-    disposition: open
+    disposition: fixed
     title: "`recipes` output still disagrees with what a run uses"
   - id: CR-01
     severity: critical
@@ -119,33 +119,33 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-open: 15
+open: 0
 total: 29
-recorded: 2026-11-12T19:07:51.911Z
+recorded: 2026-11-12T19:08:04.228Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-03 | critical | open | - |
+| CR-03 | critical | fixed | 01-REVIEW-FIX.md |
 | WR-01 | warning | skipped | 01-REVIEW-FIX.md |
 | WR-03 | warning | skipped | 01-REVIEW-FIX.md |
-| IN-02 | warning | open | - |
-| WR-12 | warning | open | - |
-| IN-01 | info | open | - |
-| IN-03 | info | open | - |
-| IN-04 | info | open | - |
-| IN-05 | info | open | - |
-| IN-06 | info | open | - |
-| IN-07 | info | open | - |
+| IN-02 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-12 | warning | fixed | 01-REVIEW-FIX.md |
+| IN-01 | info | fixed | 01-REVIEW-FIX.md |
+| IN-03 | info | fixed | 01-REVIEW-FIX.md |
+| IN-04 | info | fixed | 01-REVIEW-FIX.md |
+| IN-05 | info | fixed | 01-REVIEW-FIX.md |
+| IN-06 | info | fixed | 01-REVIEW-FIX.md |
+| IN-07 | info | fixed | 01-REVIEW-FIX.md |
 | IN-08 | info | skipped | 01-REVIEW-FIX.md |
-| IN-09 | info | open | - |
-| IN-10 | info | open | - |
-| IN-11 | info | open | - |
-| IN-12 | info | open | - |
-| IN-13 | info | open | - |
-| IN-14 | info | open | - |
+| IN-09 | info | fixed | 01-REVIEW-FIX.md |
+| IN-10 | info | fixed | 01-REVIEW-FIX.md |
+| IN-11 | info | fixed | 01-REVIEW-FIX.md |
+| IN-12 | info | fixed | 01-REVIEW-FIX.md |
+| IN-13 | info | fixed | 01-REVIEW-FIX.md |
+| IN-14 | info | fixed | 01-REVIEW-FIX.md |
 | CR-01 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | CR-02 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-02 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
