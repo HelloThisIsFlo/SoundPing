@@ -85,6 +85,6 @@ created: "2026-11-12"
 
 | Metric | Count |
 |---|---|
-| Threats found | 34 |
-| Closed | 34 |
+| Threats found | 35 |
+| Closed | 35 |
 | Open | 0 |
