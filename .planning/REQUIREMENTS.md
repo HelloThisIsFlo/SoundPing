@@ -11,10 +11,10 @@ Requirements for milestone 1. Each maps to roadmap phases.
 
 - [ ] **ENG-01**: User can list audio and MIDI devices and select them by stable ID (nothing hard-wired to one setup)
 - [ ] **ENG-02**: User can run any recipe from the `soundping` CLI and see each hit live as it lands
-- [ ] **ENG-03**: Preflight blocks a run and names the cause: missing mic permission (all-zero input; for the CLI, names the terminal app that owns the permission), silent input, clipping input
+- [x] **ENG-03**: Preflight blocks a run and names the cause: missing mic permission (all-zero input; for the CLI, names the terminal app that owns the permission), silent input, clipping input
 - [ ] **ENG-07**: A running test aborts with a clear reason if a device disappears or its sample rate or buffer size changes mid-run
 - [ ] **ENG-04**: Hits fire with randomised spacing; declared warm-up hits are discarded
-- [ ] **ENG-05**: User can run any recipe with `--simulate` against fake hardware with injected latency and jitter (no gear needed; used by CI)
+- [x] **ENG-05**: User can run any recipe with `--simulate` against fake hardware with injected latency and jitter (no gear needed; used by CI)
 - [x] **ENG-06**: Every result states which chain segments its recipe covers and which corrections it applied, with each correction's source (measured, HAL-reported, or none)
 
 ### Results
@@ -112,10 +112,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | ENG-01 | Phase 1 | Pending |
 | ENG-02 | Phase 1 | Pending |
-| ENG-03 | Phase 1 | Pending |
+| ENG-03 | Phase 1 | Complete |
 | ENG-07 | Phase 1 | Pending |
 | ENG-04 | Phase 1 | Pending |
-| ENG-05 | Phase 1 | Pending |
+| ENG-05 | Phase 1 | Complete |
 | ENG-06 | Phase 1 | Complete |
 | RES-01 | Phase 1 | Pending |
 | RES-02 | Phase 1 | Complete |
