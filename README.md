@@ -13,9 +13,10 @@ Each test fires many hits and shows a speed-test-style result: the median latenc
 
 The test sound may reach your ears, so it never goes above a ceiling.
 
-- **SoundPing picks the ceiling from your output:** headphones -30 dBFS (any Bluetooth output, and a built-in output that does not clearly report its speakers), built-in speakers -12, a loop it can see -6, anything else -18.
-- **`--listener`** tells SoundPing who listens when it cannot tell. It can lower the ceiling, never raise it.
-- **`--max-level`** is the only way to a louder test sound, for example `--max-level -18` for a Bluetooth speaker.
+- **SoundPing picks the ceiling from your output alone:** headphones -30 dBFS (any Bluetooth output, and a built-in output that does not clearly report its speakers), built-in speakers -12, everything else -18 (every interface, virtual device and loop).
+- **No setup gets a louder ceiling on its own, loops included.** The ramp starts at -48 dBFS and stops at the first clearly heard probe, so a working loop locks far below -18.
+- **`--listener`** tells SoundPing who listens. It picks the chirp band and can lower the ceiling, never raise it.
+- **`--max-level`** is the only way to a louder test sound, for example `--max-level -18` for a Bluetooth speaker or `--max-level -6` for a loop that really needs it.
 - **`--level`** picks a fixed level instead of the gentle ramp, and is still capped at the ceiling.
 
 ## Status

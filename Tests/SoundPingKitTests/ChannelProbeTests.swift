@@ -180,6 +180,14 @@ private actor GlitchingProbeBackend: AudioBackend {
       setup: Self.setup, output: Self.scarlett, options: PreflightOptions())
     #expect(interface.kind == .unknown)
     #expect(interface.ceilingDbfs == -18)
+    // The built-in speakers get -12 in a run, but the probe stays at -18, and says why.
+    let speakers = SimulatedCatalog.macSpeakers
+    let onSpeakers = ResolvedSetup(
+      output: speakers.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1, autoInChannel: false)
+    let probeOnSpeakers = try LevelRamp.probeLoudness(
+      setup: onSpeakers, output: speakers, options: PreflightOptions())
+    #expect(probeOnSpeakers.ceilingDbfs == -18)
+    #expect(probeOnSpeakers.ceilingOrigin.contains("channel probe's limit"))
     // --listener names the listener but never lifts the headphone ceiling (WR-13).
     for named in ListenerKind.allCases {
       let flagged = try LevelRamp.probeLoudness(

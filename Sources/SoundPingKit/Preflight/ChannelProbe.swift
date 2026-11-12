@@ -84,10 +84,9 @@ public struct ChannelProbe: Sendable {
   }
 
   /// `setup` names the devices; `inChannel` is ignored and replaced by each of `channels` in turn.
-  /// The probe plays under `LevelRamp.probeLoudness`: -30 dBFS for an output treated as headphones,
-  /// -18 dBFS for anything else (the channel is not known yet, so a loop cannot be seen),
-  /// `--listener` can only lower that, and `--max-level` replaces it. Whether the sound reaches a
-  /// person's ears depends on the output device alone (T-01-28).
+  /// The probe plays under `LevelRamp.probeLoudness`: the output alone sets the ceiling, -30 dBFS
+  /// for an output treated as headphones and -18 dBFS for anything else (the built-in speakers
+  /// included), `--listener` can only lower that, and `--max-level` replaces it (T-01-28).
   public func run(
     backend: any AudioBackend, setup: ResolvedSetup, channels: [ChannelInfo],
     options: PreflightOptions = PreflightOptions(), templateId: String = "chirp-loopback"

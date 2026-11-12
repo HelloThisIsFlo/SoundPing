@@ -24,13 +24,13 @@ struct RunOptions: ParsableArguments {
   @Option(
     parsing: .unconditional,
     help:
-      "The loudest test sound allowed, in dBFS (0 or below). Without it the ceiling comes from the devices: headphones -30 (any Bluetooth output, and a built-in output that does not clearly report its speakers), speakers -12 (the built-in output when it reports its speakers), loopback -6 (a Loop input channel or a virtual input on the output's own device, or a virtual output into a virtual input), unknown -18 (everything else: USB and other interfaces, a virtual output heard by a microphone). --listener can only lower it. This flag replaces it and is the only way to a louder test sound, for example -18 for a Bluetooth speaker or -6 for a cable loop on an interface."
+      "The loudest test sound allowed, in dBFS (0 or below). Without it the ceiling comes from the output alone: headphones -30 (any Bluetooth output, and a built-in output that does not clearly report its speakers), built-in speakers -12, everything else -18 (every interface, every virtual device, every loop). No loop gets a louder ceiling: the ramp stops at the first clearly heard probe, so a working loop locks far below -18. --listener can only lower the ceiling. This flag replaces it and is the only way to a louder test sound, for example -18 for a Bluetooth speaker or -6 for a loop that really needs it."
   )
   var maxLevel: Double?
 
   @Option(
     help:
-      "Who hears the test sound, for when SoundPing cannot tell: loopback, speaker, headphones or unknown. Default: worked out from the devices. It picks the chirp band (without --template) and can lower the ceiling to that listener's, never raise it: headphones stay at -30 dBFS whatever it says. Only --max-level allows a louder test sound."
+      "Who hears the test sound: loopback, speaker, headphones or unknown. Default: worked out from the devices. It picks the listener the run reports and the chirp band (without --template). It can lower the ceiling to that listener's (headphones -30, speaker -12, unknown -18; loopback lowers nothing), never raise it. Only --max-level allows a louder test sound."
   )
   var listener: String?
 

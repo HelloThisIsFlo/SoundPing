@@ -97,7 +97,7 @@ public struct Preflight: Sendable {
   }
 
   /// Nothing heard even at the ceiling (or at `--level`). The hint names what set the ceiling and
-  /// the one flag that raises it, `--max-level` (the model is at `LevelRamp.classify`).
+  /// the one flag that raises it, `--max-level` (the model is at `LevelRamp.loudness`).
   static func nothingHeardError(
     loudness: LevelRamp.Loudness, probes: Int, chosenLevel: Double?, terminalApp: String?
   ) -> SoundPingError {
@@ -118,20 +118,21 @@ public struct Preflight: Sendable {
     case .listenerFlag:
       fix +=
         "; --listener \(loudness.kind.rawValue) lowered the ceiling, so drop it, or allow a louder probe with --max-level only when you know the level is safe"
-    case .devices where loudness.detected == .headphones:
+    case .output where loudness.output == .headphones:
       fix +=
         "; Bluetooth outputs and built-in outputs that do not clearly report their speakers are treated as headphones, and --listener does not change that ceiling, so for a Bluetooth speaker (or any output that is not at your ears) allow a louder probe with --max-level, for example --max-level -18, only when you know the level is safe"
-    case .devices where loudness.detected == .loopback:
-      break
-    case .devices:
+    case .output where loudness.detected == .loopback:
       fix +=
-        "; only --max-level raises the ceiling (--listener does not), so pass it only when you know the level is safe"
+        "; a working loop is heard far below this ceiling, so check the loop routing first; the ceiling comes from the output alone and no loop gets a louder one, so only if the loop really needs more pass --max-level (for example --max-level -6)"
+    case .output:
+      fix +=
+        "; the ceiling comes from the output alone (an interface, a virtual device or a loop gets no louder one, and --listener does not raise it), so only --max-level allows a louder test sound, for example --max-level -6 for a loop that really needs it; pass it only when you know the level is safe"
     }
     return .preflight(
       "nothingHeardAtCeiling", detail,
       context: [
         "ceilingDbfs": String(loudness.ceilingDbfs), "listener": loudness.kind.rawValue,
-        "detectedListener": loudness.detected.rawValue,
+        "detectedListener": loudness.detected.rawValue, "output": loudness.output.rawValue,
         "ceilingSource": loudness.source.rawValue, "probes": String(probes), "fix": fix,
       ])
   }
@@ -162,13 +163,15 @@ public struct MuteState: Codable, Sendable, Equatable {
   }
 }
 
-/// Who the test sound is meant for. It sets how loud the ramp may go and which chirp band fits (D-12, D-14).
+/// Who the test sound is meant for. It picks the chirp band and what a run reports (D-12). It never
+/// raises the ceiling, which comes from the output (`LevelRamp.loudness`); `--listener` can only
+/// lower it.
 public enum ListenerKind: String, Codable, Sendable, CaseIterable {
   case loopback, speaker, headphones, unknown
 }
 
-/// What a person can pass to a run to steer the preflight. How the two combine with the detected
-/// listener is written down at `LevelRamp.classify`.
+/// What a person can pass to a run to steer the preflight. How the two combine with the output's
+/// ceiling is written down at `LevelRamp.loudness`.
 public struct PreflightOptions: Sendable, Equatable {
   /// Replaces the ceiling, louder or quieter (`--max-level`). The only way to a louder test sound.
   public var maxLevelDbfs: Double?

@@ -120,8 +120,8 @@ private struct Session: Sendable {
     let checks = Preflight(resolver: resolver)
     let permission = try await checks.checkPermission(on: backend)
     try await checks.checkOutput(on: backend)
-    // The one loudness model (LevelRamp.classify): the devices set the ceiling, --listener can only
-    // lower it, --max-level replaces it. A headphone output stays at -30 dBFS whatever --listener says.
+    // The one loudness model (LevelRamp.loudness): the output alone sets the ceiling, --listener
+    // can only lower it, --max-level replaces it. No input, loop or flag but --max-level raises it.
     let loudness = try LevelRamp.runLoudness(
       setup: request.setup, output: info.outputDevice, input: info.inputDevice,
       options: request.preflight)

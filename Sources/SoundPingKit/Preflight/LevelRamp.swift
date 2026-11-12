@@ -2,10 +2,10 @@ import Foundation
 
 /// The gentle auto-ramp (D-14, RESEARCH Pattern 5): start quiet, step up until the chirp is heard
 /// clearly, then lock that level for the whole run. It never goes above the ceiling, because the
-/// test sound reaches a person's ears (T-01-28; the model is written down at `classify`).
+/// test sound reaches a person's ears (T-01-28; the model is written down at `loudness`).
 ///
 /// The ramp is a pure state machine: the coordinator plays a probe at the level it asks for and
-/// tells it what was heard. The ceilings (see `classify`) and the 0.9 confidence target are RESEARCH A3 assumptions,
+/// tells it what was heard. The ceilings (see `loudness`) and the 0.9 confidence target are RESEARCH A3 assumptions,
 /// tunable on the bench.
 public struct LevelRamp: Sendable {
   public static let firstProbeDbfs = -48.0
@@ -35,78 +35,105 @@ public struct LevelRamp: Sendable {
     case fail(Failure)
   }
 
-  // MARK: Listener, ceiling, template
+  // MARK: Ceiling, listener, template
 
   /// # The loudness model (T-01-28)
   ///
   /// The test sound may reach someone's ears, so every run and every `--in-channel auto` probe
   /// plays under a ceiling. This comment is the one place the model is written down; the CLI help
-  /// of `--listener`, `--max-level` and `--level` says the same in short.
+  /// of `--listener`, `--max-level` and `--level`, the `nothingHeardAtCeiling` hint and the README
+  /// say the same in short.
   ///
-  /// **1. SoundPing works out the listener from the devices** (`classify`), in this order:
+  /// **1. The ceiling is chosen from the output alone** (`outputClass`):
   ///
-  /// | Detected listener | Ceiling | When |
+  /// | Output | Ceiling | Which outputs |
   /// |---|---|---|
-  /// | headphones | -30 dBFS | any Bluetooth output, or a built-in output that does not report its speakers (`ispk`) |
-  /// | loopback | -6 dBFS | a loop SoundPing can see: a `Loop` input channel or a virtual input on the output's own device, or a virtual output into a virtual input |
-  /// | speaker | -12 dBFS | the built-in output, only when its data source is the speakers (`ispk`) |
-  /// | unknown | -18 dBFS | everything else: USB and other interfaces, and a virtual output heard by a physical input |
+  /// | headphones | -30 dBFS | any Bluetooth output, or a built-in output that does not clearly report its speakers (`ispk`) |
+  /// | built-in speakers | -12 dBFS | the built-in output, only when its data source is the speakers (`ispk`) |
+  /// | other | -18 dBFS | everything else: every interface, every virtual output, every loop |
   ///
-  /// The `--in-channel auto` probe does not know the channel yet, so it only tells headphones
-  /// (-30) from everything else (unknown, -18); see `probeLoudness`.
+  /// The input never changes it. No setup gets a louder ceiling on its own, loops included: the
+  /// ramp starts at -48 dBFS and stops at the first clearly heard probe, so a working loop locks
+  /// far below -18. Guessing which setups are loops, to allow them more, bought nothing and caused
+  /// every hearing-safety regression so far (CR-02 to CR-05).
   ///
-  /// **2. `--listener` describes the setup when SoundPing cannot tell.** It picks the listener the
-  /// run reports and, without `--template`, the chirp band. It can lower the ceiling to that
-  /// listener's, never raise it: the ceiling is the lower of the detected listener's and the named
-  /// listener's. So `--listener loopback` on headphones, AirPods or an interface stays at -30 or
-  /// -18 dBFS.
+  /// The `--in-channel auto` probe uses the same output rule, but never goes above the -18 dBFS of
+  /// "other", so it plays the built-in speakers at -18 too (see `probeLoudness`).
+  ///
+  /// **2. `--listener` describes the setup.** It picks the listener the run reports and, without
+  /// `--template`, the chirp band. It can lower the ceiling to that listener's (headphones -30,
+  /// speaker -12, unknown -18; loopback has no ears, so it lowers nothing), never raise it.
   ///
   /// **3. `--max-level` is the only way to a louder test sound.** It replaces the ceiling (louder or
-  /// quieter) whatever was detected or named, for example `--max-level -18` for a Bluetooth
-  /// speaker or `--max-level -6` for a cable loop on an interface.
+  /// quieter), for example `--max-level -18` for a Bluetooth speaker or `--max-level -6` for a
+  /// loop that really needs it.
   ///
   /// **4. `--level` picks a fixed level instead of the ramp**, and is clamped to the ceiling (with a
   /// warning when it was above it).
   ///
-  /// Hence the invariant: without `--max-level`, an output treated as headphones never gets a
-  /// ceiling above -30 dBFS, whatever the input and whatever `--listener` says.
+  /// Why the output rule: a Bluetooth output is nearly always earbuds or headphones. A built-in
+  /// output is proven to be the speakers (`ispk`) before it gets the speaker ceiling; a missing or
+  /// unreadable data source counts as headphones, because the jack may be its own device with no
+  /// data source (WR-12). USB and other interfaces stay at -18: there is no reliable way to tell a
+  /// headset from an interface, and an interface headphone jack looks like a line out. A wrong
+  /// guess costs a speaker user one flag (`--max-level`); the opposite wrong guess would put -12 or
+  /// -18 dBFS clicks next to someone's ears.
   ///
-  /// Why this table: the headphone check comes first, because a virtual input or a `Loop` channel
-  /// on another device returns nothing the output played, so it never lifts the ceiling of an
-  /// output that reaches someone's ears. A loop needs the output to feed the input digitally: the
-  /// same device, or two virtual devices. A virtual output heard by a microphone is acoustic (a
-  /// virtual device that monitors to headphones or speakers), so it is no loop. A Bluetooth output
-  /// is nearly always earbuds or headphones. A built-in output is proven to be the speakers
-  /// (`ispk`) before it gets the speaker ceiling; a missing or unreadable data source counts as
-  /// headphones, because the jack may be its own device with no data source. A wrong guess costs a
-  /// speaker user one flag (`--max-level`); the opposite wrong guess would put -12 or -18 dBFS
-  /// clicks next to someone's ears. USB outputs stay unknown: there is no reliable way to tell a
-  /// headset from an interface, and an interface headphone jack looks like a line out.
-  public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
-    -> ListenerKind
-  {
-    // Ears first (T-01-28): an output a person hears keeps its own ceiling whatever the input is.
-    if outputIsHeadphones(setup: setup, output: output) { return .headphones }
-
-    let outputTransport = output?.transport ?? setup.output.transport
-    let inputTransport = input?.transport ?? setup.input.transport
-    let sameDevice = setup.output.uid == setup.input.uid
-    let looped = setup.inChannelName?.lowercased().hasPrefix("loop") == true
-    // A loop needs the output to feed the input digitally: one device (an interface loop channel,
-    // a virtual duplex), or a virtual output into a virtual input. A virtual output heard by a
-    // physical input is acoustic, and a physical output next to some virtual input is no loop (CR-04).
-    let bothVirtual = outputTransport == "virtual" && inputTransport == "virtual"
-    if (sameDevice && (looped || inputTransport == "virtual")) || bothVirtual {
-      return .loopback
+  /// `capDbfs` is the channel probe's limit (`probeLoudness`); a run has none.
+  public static func loudness(
+    output: OutputClass, detected: ListenerKind, options: PreflightOptions, capDbfs: Double? = nil
+  ) throws -> Loudness {
+    let kind = options.listener ?? detected
+    if let maxLevel = options.maxLevelDbfs {
+      return Loudness(
+        kind: kind, detected: detected, output: output,
+        ceilingDbfs: try validatedMaxLevel(maxLevel), source: .maxLevel)
     }
-    if outputTransport == "builtIn" { return .speaker }
-    return .unknown
+    var fromOutput = ceilingDbfs(for: output)
+    var capped = false
+    if let capDbfs, capDbfs < fromOutput {
+      fromOutput = capDbfs
+      capped = true
+    }
+    if let named = options.listener.flatMap(listenerCeilingDbfs(for:)), named < fromOutput {
+      return Loudness(
+        kind: kind, detected: detected, output: output, ceilingDbfs: named, source: .listenerFlag)
+    }
+    return Loudness(
+      kind: kind, detected: detected, output: output, ceilingDbfs: fromOutput, source: .output,
+      probeCapped: capped)
+  }
+
+  /// What the ceiling is chosen from: the output device, and nothing else (see `loudness`).
+  public enum OutputClass: String, Sendable, Equatable, CaseIterable {
+    /// Any Bluetooth output, or a built-in output that does not clearly report its speakers.
+    case headphones
+    /// The built-in output reporting its speakers (`ispk`).
+    case speakers
+    /// Everything else: every interface, every virtual output, every loop.
+    case other
+
+    /// The output, in words, for messages.
+    var phrase: String {
+      switch self {
+      case .headphones: return "headphones"
+      case .speakers: return "the built-in speakers"
+      case .other: return "an output that is neither headphones nor the built-in speakers"
+      }
+    }
+  }
+
+  /// Which ceiling the output gets (see `loudness`). It reads the output device alone.
+  public static func outputClass(setup: ResolvedSetup, output: DeviceInfo?) -> OutputClass {
+    if outputIsHeadphones(setup: setup, output: output) { return .headphones }
+    let transport = output?.transport ?? setup.output.transport
+    // A built-in output that is not headphones has proven its speakers (`ispk`).
+    return transport == "builtIn" ? .speakers : .other
   }
 
   /// Whether the output device is treated as headphones: any Bluetooth output, or a built-in
-  /// output unless it is clearly the speakers (see `classify`). Fail safe: prove "speaker" instead
-  /// of proving "headphones", so a missing data source picks the quieter ceiling. It depends on the
-  /// output device alone, whatever the input is.
+  /// output unless it is clearly the speakers. Fail safe: prove "speaker" instead of proving
+  /// "headphones", so a missing data source picks the quieter ceiling (WR-12).
   public static func outputIsHeadphones(setup: ResolvedSetup, output: DeviceInfo?) -> Bool {
     let outputTransport = output?.transport ?? setup.output.transport
     if outputTransport == "bluetooth" { return true }
@@ -114,91 +141,131 @@ public struct LevelRamp: Sendable {
     return output?.output?.dataSource != "ispk"
   }
 
-  public static func ceilingDbfs(for kind: ListenerKind) -> Double {
-    switch kind {
-    case .loopback: return -6
-    case .speaker: return -12
+  public static func ceilingDbfs(for output: OutputClass) -> Double {
+    switch output {
     case .headphones: return -30
-    case .unknown: return -18
+    case .speakers: return -12
+    case .other: return -18
     }
+  }
+
+  /// The ceiling `--listener` lowers to: the matching output's. A loop has no ears, so naming it
+  /// lowers nothing (nil).
+  public static func listenerCeilingDbfs(for kind: ListenerKind) -> Double? {
+    switch kind {
+    case .headphones: return ceilingDbfs(for: .headphones)
+    case .speaker: return ceilingDbfs(for: .speakers)
+    case .unknown: return ceilingDbfs(for: .other)
+    case .loopback: return nil
+    }
+  }
+
+  /// The listener a run reports and picks its chirp band for, when `--listener` does not name one.
+  /// It never sets the ceiling (see `loudness`): a loop SoundPing can see only picks the
+  /// full-range chirp.
+  ///
+  /// | Detected listener | When |
+  /// |---|---|
+  /// | headphones | the output is headphones (see `outputClass`) |
+  /// | loopback | a `Loop` input channel or a virtual input on the output's own device, or a virtual output into a virtual input |
+  /// | speaker | the built-in speakers |
+  /// | unknown | everything else |
+  public static func classify(setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?)
+    -> ListenerKind
+  {
+    let outputClass = outputClass(setup: setup, output: output)
+    if outputClass == .headphones { return .headphones }
+
+    let outputTransport = output?.transport ?? setup.output.transport
+    let inputTransport = input?.transport ?? setup.input.transport
+    let sameDevice = setup.output.uid == setup.input.uid
+    let looped = setup.inChannelName?.lowercased().hasPrefix("loop") == true
+    let bothVirtual = outputTransport == "virtual" && inputTransport == "virtual"
+    if (sameDevice && (looped || inputTransport == "virtual")) || bothVirtual {
+      return .loopback
+    }
+    return outputClass == .speakers ? .speaker : .unknown
   }
 
   /// What set the ceiling of a run or probe.
   public enum CeilingSource: String, Sendable, Equatable {
-    /// The listener SoundPing worked out from the devices.
-    case devices
-    /// `--listener`, because it named a quieter listener than the detected one.
+    /// The output device (see `loudness`).
+    case output
+    /// `--listener`, because it named a quieter listener than the output's ceiling.
     case listenerFlag
     /// `--max-level`.
     case maxLevel
   }
 
-  /// The listener and ceiling a run or probe plays under (see `classify` for the model).
+  /// The listener and ceiling a run or probe plays under (see `loudness` for the model).
   public struct Loudness: Sendable, Equatable {
     /// The listener the run reports and picks the chirp band for: `--listener` when given, else
     /// the detected one.
     public var kind: ListenerKind
-    /// The listener SoundPing worked out from the devices.
+    /// The listener SoundPing worked out from the devices (`classify`).
     public var detected: ListenerKind
+    /// The output the ceiling was chosen from.
+    public var output: OutputClass
     public var ceilingDbfs: Double
     public var source: CeilingSource
+    /// The channel probe's limit held the ceiling below the output's own.
+    public var probeCapped: Bool
+
+    public init(
+      kind: ListenerKind, detected: ListenerKind, output: OutputClass, ceilingDbfs: Double,
+      source: CeilingSource, probeCapped: Bool = false
+    ) {
+      self.kind = kind
+      self.detected = detected
+      self.output = output
+      self.ceilingDbfs = ceilingDbfs
+      self.source = source
+      self.probeCapped = probeCapped
+    }
 
     /// What set the ceiling, in words, for messages.
     public var ceilingOrigin: String {
       switch source {
-      case .devices: return "for a \(detected.rawValue) listener, worked out from the devices"
+      case .output where probeCapped:
+        return "the channel probe's limit, below the ceiling for \(output.phrase)"
+      case .output: return "for \(output.phrase), chosen from the output alone"
       case .listenerFlag: return "set by --listener \(kind.rawValue)"
       case .maxLevel: return "set by --max-level"
       }
     }
 
-    /// A note for the run when `--listener` named a louder listener than the devices allow: the
+    /// A note for the run when `--listener` named a louder listener than the output allows: the
     /// flag did not raise the ceiling, and the user should know why.
     public var listenerNotRaisedWarning: String? {
-      guard source == .devices, kind != detected,
-        LevelRamp.ceilingDbfs(for: kind) > ceilingDbfs
+      guard source == .output, kind != detected,
+        (LevelRamp.listenerCeilingDbfs(for: kind) ?? 0) > ceilingDbfs
       else { return nil }
       return String(
         format:
-          "--listener %@ does not raise the %.0f dBFS ceiling of a %@ output; only --max-level allows a louder test sound",
-        kind.rawValue, ceilingDbfs, detected.rawValue)
+          "--listener %@ does not raise the %.0f dBFS ceiling of %@; only --max-level allows a louder test sound",
+        kind.rawValue, ceilingDbfs, output.phrase)
     }
   }
 
-  /// Applies `--listener` and `--max-level` to the detected listener: `--max-level` replaces the
-  /// ceiling, otherwise it is the lower of the detected and the named listener's ceilings.
-  public static func loudness(detected: ListenerKind, options: PreflightOptions) throws -> Loudness
-  {
-    let kind = options.listener ?? detected
-    if let maxLevel = options.maxLevelDbfs {
-      return Loudness(
-        kind: kind, detected: detected, ceilingDbfs: try validatedMaxLevel(maxLevel),
-        source: .maxLevel)
-    }
-    let fromDevices = ceilingDbfs(for: detected)
-    let fromFlag = ceilingDbfs(for: kind)
-    if fromFlag < fromDevices {
-      return Loudness(kind: kind, detected: detected, ceilingDbfs: fromFlag, source: .listenerFlag)
-    }
-    return Loudness(kind: kind, detected: detected, ceilingDbfs: fromDevices, source: .devices)
-  }
-
-  /// The loudness of a run: the detected listener (`classify`) with the user's options applied.
+  /// The loudness of a run: the output's ceiling with the user's options applied, and the
+  /// detected listener for the report and the chirp band.
   public static func runLoudness(
     setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?, options: PreflightOptions
   ) throws -> Loudness {
-    try loudness(detected: classify(setup: setup, output: output, input: input), options: options)
+    try loudness(
+      output: outputClass(setup: setup, output: output),
+      detected: classify(setup: setup, output: output, input: input), options: options)
   }
 
-  /// The loudness of an `--in-channel auto` probe. The channel is not known yet, so a loop cannot
-  /// be seen: the probe tells headphones (-30 dBFS) from everything else (unknown, -18 dBFS), and
-  /// never takes a louder detected kind than unknown.
+  /// The loudness of an `--in-channel auto` probe: the output rule, but never above the -18 dBFS
+  /// of "other", so headphones get -30 and everything else, the built-in speakers included, -18.
   public static func probeLoudness(
     setup: ResolvedSetup, output: DeviceInfo?, options: PreflightOptions
   ) throws -> Loudness {
-    let detected: ListenerKind =
-      outputIsHeadphones(setup: setup, output: output) ? .headphones : .unknown
-    return try loudness(detected: detected, options: options)
+    let outputClass = outputClass(setup: setup, output: output)
+    return try loudness(
+      output: outputClass, detected: outputClass == .headphones ? .headphones : .unknown,
+      options: options, capDbfs: ceilingDbfs(for: .other))
   }
 
   /// `--max-level`, refused unless it is a finite dBFS value of 0 or below.

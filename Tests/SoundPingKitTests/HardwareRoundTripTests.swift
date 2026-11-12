@@ -10,7 +10,7 @@ import Testing
 /// channel (Scarlett "Loop 1" fed by Focusrite Control) or a patch cable. Runs only with
 /// SOUNDPING_HW=1; SOUNDPING_HW_OUTPUT, SOUNDPING_HW_INPUT and SOUNDPING_HW_IN_CHANNEL (a number
 /// or a channel name) name another loop. Each run finds its own level with the preflight ramp
-/// (first probe -48 dBFS, never above the loopback ceiling of -6), then plays 20 chirps, twice.
+/// (first probe -48 dBFS, never above the -18 dBFS ceiling of an interface), then plays 20 chirps, twice.
 /// The first run may make macOS ask the host app for microphone access.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["SOUNDPING_HW"] == "1"))
 struct HardwareRoundTripTests {
