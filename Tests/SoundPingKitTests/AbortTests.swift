@@ -115,7 +115,8 @@ private actor LateEventBackend: AudioBackend {
   @Test func aSampleRateChangeAtHitThirtyAbortsTheRun() async throws {
     let (store, cleanup) = try Self.makeStore()
     defer { cleanup() }
-    let outcome = await Self.run([Fault(kind: .sampleRateChange, atHit: 30)], hits: 40, store: store)
+    let outcome = await Self.run(
+      [Fault(kind: .sampleRateChange, atHit: 30)], hits: 40, store: store)
 
     let error = try #require(outcome.error)
     #expect(error.kind == .deviceChanged)
@@ -241,9 +242,10 @@ private actor LateEventBackend: AudioBackend {
   }
 
   @Test func malformedFaultSpecsAreUsageErrors() {
-    for spec in ["", "sampleRateChange", "sampleRateChange@", "@3", "nonsense@3", "overload@-1",
-      "overload@x", "overload@3@4"]
-    {
+    for spec in [
+      "", "sampleRateChange", "sampleRateChange@", "@3", "nonsense@3", "overload@-1",
+      "overload@x", "overload@3@4",
+    ] {
       let error = #expect(throws: SoundPingError.self) { _ = try Fault.parse(spec) }
       #expect(error?.kind == .usage, "'\(spec)'")
       #expect(error?.code == "invalidParameters", "'\(spec)'")

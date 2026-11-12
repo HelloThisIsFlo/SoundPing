@@ -64,7 +64,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
     }
   }
   return ScopeInfo(
-    channels: channels, deviceLatency: 0, streamLatencies: Array(repeating: 0, count: streams.count),
+    channels: channels, deviceLatency: 0,
+    streamLatencies: Array(repeating: 0, count: streams.count),
     safetyOffset: 0, bufferFrameSize: 16, bufferFrameSizeRange: FrameSizeRange(min: 16, max: 4096))
 }
 
@@ -74,7 +75,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
   private static let inScope = scope(streams: [2, 4])
 
   private static func makeState(
-    outChannels: [Int] = [4, 5], inChannel: Int = 6, templates: [[Float]] = [[1, 2, 3, 4, 5, 6, 7, 8]],
+    outChannels: [Int] = [4, 5], inChannel: Int = 6,
+    templates: [[Float]] = [[1, 2, 3, 4, 5, 6, 7, 8]],
     sampleRate: Double = 48_000, captureSeconds: Double = 8
   ) throws -> RTState {
     RTState(
@@ -199,7 +201,9 @@ private func scope(streams: [Int]) -> ScopeInfo {
     // own label in that channel and a decoy in all the others.
     for start in [5000, 5016] {
       let input = SyntheticBuffers(widths: [2, 4], frames: 16, fill: -3)
-      for frame in 0..<16 { input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame)) }
+      for frame in 0..<16 {
+        input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame))
+      }
       var time = timeStamp(sample: Double(start), host: UInt64(start) * 10, rate: 0.99998)
       ioCycleInput(rt, input.pointer, &time)
     }
@@ -267,7 +271,9 @@ private func scope(streams: [Int]) -> ScopeInfo {
     #expect(rt.captureCapacity == 100)
     for start in stride(from: 0, to: 240, by: 16) {
       let input = SyntheticBuffers(widths: [2, 4], frames: 16)
-      for frame in 0..<16 { input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame)) }
+      for frame in 0..<16 {
+        input.set(buffer: 1, frame: frame, channel: 3, to: Float(start + frame))
+      }
       var time = timeStamp(sample: Double(start))
       ioCycleInput(rt, input.pointer, &time)
     }
@@ -349,7 +355,9 @@ private func scope(streams: [Int]) -> ScopeInfo {
     #expect(importers.allSatisfy { $0.hasPrefix("SoundPingKit/Audio/") }, "\(importers.sorted())")
     // The real-time file stays free of anything that suspends, spawns work or logs.
     let cycle = lines.filter { $0.file == "SoundPingKit/Audio/IOCycle.swift" }.map(\.line)
-    for forbidden in ["print(", "await ", "async ", "Task {", "Task(", "DispatchQueue", "NSLock", ".withLock"] {
+    for forbidden in [
+      "print(", "await ", "async ", "Task {", "Task(", "DispatchQueue", "NSLock", ".withLock",
+    ] {
       #expect(!cycle.contains { $0.contains(forbidden) }, "IOCycle.swift contains '\(forbidden)'")
     }
   }

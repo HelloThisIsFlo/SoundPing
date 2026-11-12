@@ -69,7 +69,8 @@ struct HardwareRoundTripTests {
       #expect(path.valid >= 18, "pass \(pass): only \(path.valid) of \(path.n) hits were valid")
       #expect(
         (0...4_800).contains(median), "pass \(pass): path median \(median) frames is not plausible")
-      #expect(result.selfTest != nil, "pass \(pass): a same-device run must carry a clock self-test")
+      #expect(
+        result.selfTest != nil, "pass \(pass): a same-device run must carry a clock self-test")
       // SoundPing's own buffer, as applied, not as requested.
       #expect(result.setup.bufferFrames == 128, "pass \(pass): buffer \(result.setup.bufferFrames)")
       #expect(result.simulation == nil)

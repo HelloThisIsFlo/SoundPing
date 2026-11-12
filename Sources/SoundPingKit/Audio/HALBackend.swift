@@ -109,7 +109,8 @@ public final class HALBackend: AudioBackend {
 
     // SoundPing's own buffer size, per process; the HAL may clamp it. What the HAL reports back is
     // what the run records (the DAW's buffer is a different number and not ours to read).
-    let outBuffer = try Self.applyBuffer(outID, requested: setup.requestedBufferFrames, name: outInfo.name)
+    let outBuffer = try Self.applyBuffer(
+      outID, requested: setup.requestedBufferFrames, name: outInfo.name)
     let inBuffer =
       inID == outID
       ? outBuffer
@@ -201,7 +202,8 @@ public final class HALBackend: AudioBackend {
     let ids = HALProperty.array(
       AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices,
       of: AudioDeviceID.self, initial: AudioDeviceID(0))
-    guard let id = ids.first(where: { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == uid })
+    guard
+      let id = ids.first(where: { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == uid })
     else {
       throw SoundPingError.deviceChanged(
         "deviceGone", "device '\(uid)' disappeared while the run was being set up",
@@ -257,7 +259,8 @@ public final class HALBackend: AudioBackend {
       }
     }
     guard
-      let applied = HALProperty.get(device, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
+      let applied = HALProperty.get(
+        device, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
       applied > 0
     else {
       throw Self.preflight(
@@ -299,7 +302,8 @@ public final class HALBackend: AudioBackend {
   public func start() async throws {
     let (rt, devices) = state.withLock { ($0.rt, $0.devices) }
     guard let rt else {
-      throw SoundPingError.internalFailure("notOpen", "the HAL backend was started before it was opened")
+      throw SoundPingError.internalFailure(
+        "notOpen", "the HAL backend was started before it was opened")
     }
     for (position, device) in devices.enumerated() {
       let status = AudioDeviceStart(device.id, device.procID)
@@ -314,7 +318,9 @@ public final class HALBackend: AudioBackend {
     // The labels of both directions are only known once a callback has run.
     let clock = ContinuousClock()
     let deadline = clock.now + Self.startTimeout
-    while !(rt.inputStarted.load(ordering: .acquiring) && rt.outputStarted.load(ordering: .acquiring)) {
+    while !(rt.inputStarted.load(ordering: .acquiring)
+      && rt.outputStarted.load(ordering: .acquiring))
+    {
       guard clock.now < deadline else {
         throw SoundPingError.deviceChanged(
           "ioStopped", "no audio callbacks arrived within \(Self.startTimeout)",
@@ -324,7 +330,9 @@ public final class HALBackend: AudioBackend {
     }
 
     // The buffer the HAL settled on after the start is the one the run measures at.
-    let (inputID, inputUID, reported) = state.withLock { ($0.inputDeviceID, $0.inputUID, $0.reportedBuffer) }
+    let (inputID, inputUID, reported) = state.withLock {
+      ($0.inputDeviceID, $0.inputUID, $0.reportedBuffer)
+    }
     if let now = HALProperty.get(inputID, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0)),
       Int(now) != reported
     {
@@ -345,7 +353,8 @@ public final class HALBackend: AudioBackend {
   public func schedule(_ hits: [ScheduledHit]) async throws {
     try state.withLock { state in
       guard let rt = state.rt else {
-        throw SoundPingError.internalFailure("notOpen", "hits were scheduled before the backend was opened")
+        throw SoundPingError.internalFailure(
+          "notOpen", "hits were scheduled before the backend was opened")
       }
       var entries: [ScheduleEntry] = []
       entries.reserveCapacity(hits.count)

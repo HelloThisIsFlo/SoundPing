@@ -34,7 +34,8 @@ func ioCycleInput(
   let slot = rt.inputSlot
   let list = UnsafeRawPointer(data)
   guard slot.buffer < Int(list.load(as: UInt32.self)) else { return }
-  let buffer = (list + rt.bufferListHeader + slot.buffer * rt.bufferStride).load(as: AudioBuffer.self)
+  let buffer = (list + rt.bufferListHeader + slot.buffer * rt.bufferStride).load(
+    as: AudioBuffer.self)
   let channels = Int(buffer.mNumberChannels)
   guard channels > 0, channels == slot.channelsInBuffer, let source = buffer.mData else { return }
   let frames = Int(buffer.mDataByteSize) / (channels * bytesPerSample)
@@ -170,7 +171,8 @@ func ioCycleOutput(
       while x < end {
         let frame = x - label
         if frame < available {
-          destination[frame * channels + slot.channelInBuffer] += template[x - entry.outputFrame] * entry.gain
+          destination[frame * channels + slot.channelInBuffer] +=
+            template[x - entry.outputFrame] * entry.gain
         }
         x += 1
       }

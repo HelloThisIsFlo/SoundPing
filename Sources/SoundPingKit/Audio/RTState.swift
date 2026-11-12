@@ -171,7 +171,8 @@ final class RTState: Sendable {
     bufferStride = MemoryLayout<AudioBuffer>.stride
 
     hasInput = configuration.inputSlot != nil
-    inputSlot = configuration.inputSlot ?? ChannelSlot(buffer: 0, channelInBuffer: 0, channelsInBuffer: 1)
+    inputSlot =
+      configuration.inputSlot ?? ChannelSlot(buffer: 0, channelInBuffer: 0, channelsInBuffer: 1)
     captureCapacity = Swift.max(1, Int(configuration.sampleRate * configuration.captureSeconds))
     capture = .allocate(capacity: captureCapacity)
     capture.initialize(repeating: 0, count: captureCapacity)
