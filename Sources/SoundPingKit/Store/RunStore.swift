@@ -32,9 +32,22 @@ public struct RunListing: Codable, Sendable, Equatable {
 /// Reads and writes runs as `<runs>/<yyyyMMdd'T'HHmmss'Z'>-<slug>/run.json` (D-06, RESEARCH Pattern 9).
 public struct RunStore: Sendable {
   public let paths: StorePaths
+  /// Kept only so the run lock lives exactly as long as the store that was handed out with it.
+  private let heldLock: RunLock?
 
   public init(paths: StorePaths) {
     self.paths = paths
+    self.heldLock = nil
+  }
+
+  private init(paths: StorePaths, heldLock: RunLock?) {
+    self.paths = paths
+    self.heldLock = heldLock
+  }
+
+  /// The same store, holding `<root>/.run.lock` until the last copy goes away (T-01-06).
+  public func acquiringRunLock() throws -> RunStore {
+    RunStore(paths: paths, heldLock: try RunLock.acquire(at: paths.runLock))
   }
 
   /// Longest slug kept, in characters.
@@ -73,19 +86,27 @@ public struct RunStore: Sendable {
     return "\(formatter.string(from: createdAt))-\(slug(recipeId: recipeId, label: label))"
   }
 
-  /// Creates the run folder. Refuses to reuse an existing one rather than overwrite a run.
+  /// Creates the run folder. A name that is already taken gets `-2`, `-3`, … so two runs created in
+  /// the same second never share a folder and a run is never overwritten (RUN-01).
   public func createRunFolder(recipeId: String, label: String?, createdAt: Date) throws -> URL {
-    let name = Self.folderName(recipeId: recipeId, label: label, createdAt: createdAt)
-    let folder = try runsChild(named: name)
-    do {
-      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-    } catch {
-      throw SoundPingError.internalFailure(
-        "runFolderUnavailable",
-        "cannot create the run folder '\(folder.path)': \(error.localizedDescription)",
-        context: ["path": folder.path])
+    let base = Self.folderName(recipeId: recipeId, label: label, createdAt: createdAt)
+    for attempt in 1...1000 {
+      let folder = try runsChild(named: attempt == 1 ? base : "\(base)-\(attempt)")
+      if FileManager.default.fileExists(atPath: folder.path) { continue }
+      do {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        return folder
+      } catch {
+        throw SoundPingError.internalFailure(
+          "runFolderUnavailable",
+          "cannot create the run folder '\(folder.path)': \(error.localizedDescription)",
+          context: ["path": folder.path])
+      }
     }
-    return folder
+    throw SoundPingError.internalFailure(
+      "runFolderUnavailable",
+      "no free run folder name under '\(paths.runs.path)' for '\(base)'",
+      context: ["path": paths.runs.path])
   }
 
   /// Joins a bare name under `runs/` and proves the result is still inside it (defence in depth).
@@ -148,15 +169,45 @@ public struct RunStore: Sendable {
   }
 }
 
-// RED-phase stubs: the API exists so the tests compile and fail on their assertions.
 extension RunStore {
-  public func acquiringRunLock() throws -> RunStore { self }
+  /// The run.json file for a run id (a bare folder name under `runs/`) or an absolute folder path
+  /// that holds one. Anything else is `unreadableRun` and nothing outside `runs/` is read (T-01-34).
+  func runFile(_ idOrPath: String) throws -> URL {
+    let folder: URL
+    if idOrPath.hasPrefix("/") {
+      folder = URL(fileURLWithPath: idOrPath, isDirectory: true).standardizedFileURL
+    } else {
+      folder = try runsChild(named: idOrPath)
+    }
+    let file = folder.appendingPathComponent("run.json")
+    guard FileManager.default.fileExists(atPath: file.path) else {
+      throw SoundPingError.usage(
+        "unreadableRun", "no run.json in '\(folder.path)'", context: ["path": folder.path])
+    }
+    return file
+  }
 
+  /// run.json exactly as stored, byte for byte.
   public func loadBytes(_ idOrPath: String) throws -> Data {
-    throw SoundPingError.internalFailure("notImplemented", "loadBytes")
+    let file = try runFile(idOrPath)
+    do {
+      return try Data(contentsOf: file)
+    } catch {
+      throw SoundPingError.usage(
+        "unreadableRun", "cannot read '\(file.path)': \(error.localizedDescription)",
+        context: ["path": file.path])
+    }
   }
 
   public func load(_ idOrPath: String) throws -> RunResult {
-    throw SoundPingError.internalFailure("notImplemented", "load")
+    let file = try runFile(idOrPath)
+    let data = try loadBytes(idOrPath)
+    do {
+      return try RunJSON.decoder().decode(RunResult.self, from: data)
+    } catch {
+      throw SoundPingError.usage(
+        "unreadableRun", "cannot decode '\(file.path)': \(error.localizedDescription)",
+        context: ["path": file.path])
+    }
   }
 }

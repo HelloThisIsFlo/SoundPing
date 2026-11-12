@@ -45,9 +45,12 @@ struct RunOptions: ParsableArguments {
     if seed == nil { seed = UInt64.random(in: 0..<(1 << 53)) }
   }
 
+  /// The store for a run. It holds `<root>/.run.lock` for as long as the store (or a copy of it,
+  /// such as the coordinator's) is alive, so a second run fails fast with `runInProgress` (T-01-06).
   func makeStore() throws -> RunStore {
-    RunStore(
-      paths: try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment))
+    try RunStore(
+      paths: try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment)
+    ).acquiringRunLock()
   }
 
   /// The device side of the run. Hardware arrives with the HAL backend; until then only the

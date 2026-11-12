@@ -8,7 +8,7 @@ struct RunsCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "runs",
     abstract: "List and show saved runs.",
-    subcommands: [List.self]
+    subcommands: [List.self, Show.self]
   )
 
   struct List: AsyncParsableCommand {
@@ -64,6 +64,50 @@ struct RunsCommand: AsyncParsableCommand {
           "\(id)  \(stamp.string(from: run.createdAt))  \(run.label ?? "-")  \(median)  \(run.valid)/\(run.n)"
         )
       }
+    }
+  }
+
+  struct Show: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "show",
+      abstract: "Show one saved run, by run id or absolute folder path."
+    )
+
+    @Argument(help: "A run id from `runs list`, or the absolute path of a run folder.")
+    var run: String
+
+    @Option(
+      help:
+        "Absolute store folder. Default: SOUNDPING_HOME, else ~/Library/Application Support/SoundPing."
+    )
+    var store: String?
+
+    @Flag(help: "Print run.json exactly as stored.")
+    var json = false
+
+    func run() async throws {
+      try await withErrorReporting(jsonMode: json) {
+        let paths = try StorePaths.resolve(
+          flag: store, environment: ProcessInfo.processInfo.environment)
+        let runStore = RunStore(paths: paths)
+        if json {
+          FileHandle.standardOutput.write(try runStore.loadBytes(run))
+        } else {
+          Self.writeSummary(try runStore.load(run))
+        }
+      }
+    }
+
+    private static func writeSummary(_ result: RunResult) {
+      let ms = { (value: Double?) in value.map { String(format: "%.2f ms", $0) } ?? "-" }
+      let stats = result.measured.path
+      print("recipe   \(result.recipe.id)")
+      print("label    \(result.label ?? "-")")
+      print("tags     \(result.tags.isEmpty ? "-" : result.tags.joined(separator: ", "))")
+      print("median   \(ms(stats?.median?.ms))")
+      print("jitter   \(ms(stats?.jitter?.ms))")
+      print("valid    \(stats?.valid ?? 0)/\(stats?.n ?? 0)")
+      print("path     \(result.runPath)")
     }
   }
 }

@@ -76,7 +76,9 @@ import Testing
     defer { cleanup() }
     let folder = try store.createRunFolder(
       recipeId: "round-trip", label: "../../x", createdAt: Self.baseDate)
-    #expect(folder.deletingLastPathComponent().standardizedFileURL == store.paths.runs.standardizedFileURL)
+    #expect(
+      folder.deletingLastPathComponent().standardizedFileURL == store.paths.runs.standardizedFileURL
+    )
     #expect(folder.lastPathComponent.hasSuffix("-round-trip-x"))
   }
 
@@ -237,7 +239,8 @@ import Testing
     for id in ["..", ".", "../x", "a/b", ""] {
       #expect(Self.code { _ = try store.load(id) } == "unreadableRun", "id '\(id)'")
     }
-    #expect(Self.code { _ = try store.load(root.appendingPathComponent("nope").path) } == "unreadableRun")
+    #expect(
+      Self.code { _ = try store.load(root.appendingPathComponent("nope").path) } == "unreadableRun")
   }
 
   @Test func anUndecodableRunJsonIsUnreadableAndNamesThePath() throws {
