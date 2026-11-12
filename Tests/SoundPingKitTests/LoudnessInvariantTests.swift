@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Synchronization
 import Testing
@@ -68,26 +69,30 @@ private final class LoudestPlayedBackend: AudioBackend {
 @Suite struct LoudnessInvariantTests {
   // MARK: The approved rule, written out
 
-  /// The output kinds the rule names, each with how the HAL would report it.
+  /// The output kinds the rule names, each with how the HAL would report it. Each device's
+  /// transport goes through `HALDeviceCatalog.transportName`, the mapping production reads the HAL
+  /// with, so a change there (BLE mapped apart, `builtIn` renamed) fails here (IN-22). The expected
+  /// ceilings stay literal.
   enum OutputKind: String, CaseIterable, CustomTestStringConvertible {
     case builtInSpeakers, builtInHeadphones, builtInNoDataSource, builtInOtherDataSource
-    case builtInCatalogMiss, bluetooth, bluetoothCatalogMiss, usb, thunderbolt, aggregate, airPlay
-    case otherTransport, virtual, virtualCatalogMiss
+    case builtInCatalogMiss, bluetooth, bluetoothLE, bluetoothCatalogMiss, usb, thunderbolt
+    case aggregate, airPlay, unknownTransport, virtual, virtualCatalogMiss
 
     var testDescription: String { rawValue }
 
     /// The run ceiling the approved rule gives this output, without `--listener` or `--max-level`.
     var ruleCeiling: Double {
       switch self {
-      // Known headphones: Bluetooth, or a built-in output that does not clearly report `ispk`
-      // (WR-12 fail-safe: no data source, another one, or no device info at all).
+      // Known headphones: Bluetooth (classic or LE), or a built-in output that does not clearly
+      // report `ispk` (WR-12 fail-safe: no data source, another one, or no device info at all).
       case .builtInHeadphones, .builtInNoDataSource, .builtInOtherDataSource, .builtInCatalogMiss,
-        .bluetooth, .bluetoothCatalogMiss:
+        .bluetooth, .bluetoothLE, .bluetoothCatalogMiss:
         return -30
       case .builtInSpeakers:
         return -12
       // Everything else, every virtual output and every interface included.
-      case .usb, .thunderbolt, .aggregate, .airPlay, .otherTransport, .virtual, .virtualCatalogMiss:
+      case .usb, .thunderbolt, .aggregate, .airPlay, .unknownTransport, .virtual,
+        .virtualCatalogMiss:
         return -18
       }
     }
@@ -97,48 +102,129 @@ private final class LoudestPlayedBackend: AudioBackend {
 
     var isKnownHeadphones: Bool { ruleCeiling == -30 }
 
+    /// The HAL transport type (`kAudioDevicePropertyTransportType`) of this output.
+    var transportType: UInt32 {
+      switch self {
+      case .builtInSpeakers, .builtInHeadphones, .builtInNoDataSource, .builtInOtherDataSource,
+        .builtInCatalogMiss:
+        return kAudioDeviceTransportTypeBuiltIn
+      case .bluetooth, .bluetoothCatalogMiss: return kAudioDeviceTransportTypeBluetooth
+      case .bluetoothLE: return kAudioDeviceTransportTypeBluetoothLE
+      case .usb: return kAudioDeviceTransportTypeUSB
+      case .thunderbolt: return kAudioDeviceTransportTypeThunderbolt
+      case .aggregate: return kAudioDeviceTransportTypeAggregate
+      case .airPlay: return kAudioDeviceTransportTypeAirPlay
+      case .unknownTransport: return kAudioDeviceTransportTypeUnknown
+      case .virtual, .virtualCatalogMiss: return kAudioDeviceTransportTypeVirtual
+      }
+    }
+
+    /// The transport string a listing (and so a saved setup) carries for this output.
+    var transport: String { HALDeviceCatalog.transportName(for: transportType) }
+
     /// The device the HAL would report (nil for a catalog miss) and the reference the setup keeps.
     var device: (info: DeviceInfo?, ref: DeviceRef) {
-      func with(
-        _ base: DeviceInfo, uid: String, transport: String, dataSource: String?? = nil
-      ) -> DeviceInfo {
+      func with(_ base: DeviceInfo, uid: String? = nil, dataSource: String?? = nil) -> DeviceInfo {
         var device = base
-        device.uid = uid
+        if let uid { device.uid = uid }
         device.transport = transport
         if let dataSource { device.output?.dataSource = dataSource }
         return device
       }
       let speakers = SimulatedCatalog.macSpeakers
+      let scarlett = SimulatedCatalog.scarlett
       let info: DeviceInfo
       switch self {
-      case .builtInSpeakers: info = speakers
-      case .builtInHeadphones:
-        info = with(speakers, uid: "out-hdpn", transport: "builtIn", dataSource: "hdpn")
-      case .builtInNoDataSource:
-        info = with(speakers, uid: "out-nil", transport: "builtIn", dataSource: .some(nil))
-      case .builtInOtherDataSource:
-        info = with(speakers, uid: "out-hdmi", transport: "builtIn", dataSource: "hdmi")
-      case .bluetooth:
-        info = with(speakers, uid: "out-bt", transport: "bluetooth", dataSource: "ispk")
-      case .usb: info = SimulatedCatalog.scarlett
-      case .thunderbolt:
-        info = with(SimulatedCatalog.scarlett, uid: "out-tb", transport: "thunderbolt")
-      case .aggregate:
-        info = with(SimulatedCatalog.scarlett, uid: "out-aggregate", transport: "aggregate")
-      case .airPlay:
-        info = with(speakers, uid: "out-airplay", transport: "airPlay", dataSource: .some(nil))
-      case .otherTransport:
-        info = with(SimulatedCatalog.scarlett, uid: "out-other", transport: "other")
-      case .virtual: info = SimulatedCatalog.duplex
+      case .builtInSpeakers: info = with(speakers)
+      case .builtInHeadphones: info = with(speakers, uid: "out-hdpn", dataSource: "hdpn")
+      case .builtInNoDataSource: info = with(speakers, uid: "out-nil", dataSource: .some(nil))
+      case .builtInOtherDataSource: info = with(speakers, uid: "out-hdmi", dataSource: "hdmi")
+      case .bluetooth: info = with(speakers, uid: "out-bt", dataSource: "ispk")
+      case .bluetoothLE: info = with(speakers, uid: "out-ble", dataSource: "ispk")
+      case .usb: info = with(scarlett)
+      case .thunderbolt: info = with(scarlett, uid: "out-tb")
+      case .aggregate: info = with(scarlett, uid: "out-aggregate")
+      case .airPlay: info = with(speakers, uid: "out-airplay", dataSource: .some(nil))
+      case .unknownTransport: info = with(scarlett, uid: "out-unknown")
+      case .virtual: info = with(SimulatedCatalog.duplex)
       case .builtInCatalogMiss:
-        return (nil, DeviceRef(uid: "out-builtin-miss", name: "Built-in", transport: "builtIn"))
+        return (nil, DeviceRef(uid: "out-builtin-miss", name: "Built-in", transport: transport))
       case .bluetoothCatalogMiss:
-        return (nil, DeviceRef(uid: "out-bt-miss", name: "AirPods", transport: "bluetooth"))
+        return (nil, DeviceRef(uid: "out-bt-miss", name: "AirPods", transport: transport))
       case .virtualCatalogMiss:
-        return (nil, DeviceRef(uid: "out-virtual-miss", name: "Loopback", transport: "virtual"))
+        return (nil, DeviceRef(uid: "out-virtual-miss", name: "Loopback", transport: transport))
       }
       return (info, info.ref)
     }
+  }
+
+  // MARK: Every transport the HAL can report
+
+  /// Every transport type CoreAudio defines, with the run ceiling the rule gives it, written out.
+  /// A built-in output is listed twice: on its speakers (`ispk`) and on any other data source.
+  /// `RemoteScreen` and `RemoteStreaming` are spelled as their four-char codes so an older SDK
+  /// still builds this.
+  private static let everyTransport:
+    [(name: String, type: UInt32, dataSource: String?, ceiling: Double)] = [
+      ("builtIn on ispk", kAudioDeviceTransportTypeBuiltIn, "ispk", -12),
+      ("builtIn on hdpn", kAudioDeviceTransportTypeBuiltIn, "hdpn", -30),
+      ("builtIn, no data source", kAudioDeviceTransportTypeBuiltIn, nil, -30),
+      ("bluetooth", kAudioDeviceTransportTypeBluetooth, "ispk", -30),
+      ("bluetoothLE", kAudioDeviceTransportTypeBluetoothLE, "ispk", -30),
+      ("unknown", kAudioDeviceTransportTypeUnknown, nil, -18),
+      ("aggregate", kAudioDeviceTransportTypeAggregate, nil, -18),
+      ("autoAggregate", kAudioDeviceTransportTypeAutoAggregate, nil, -18),
+      ("virtual", kAudioDeviceTransportTypeVirtual, nil, -18),
+      ("pci", kAudioDeviceTransportTypePCI, nil, -18),
+      ("usb", kAudioDeviceTransportTypeUSB, nil, -18),
+      ("fireWire", kAudioDeviceTransportTypeFireWire, nil, -18),
+      ("hdmi", kAudioDeviceTransportTypeHDMI, nil, -18),
+      ("displayPort", kAudioDeviceTransportTypeDisplayPort, nil, -18),
+      ("airPlay", kAudioDeviceTransportTypeAirPlay, nil, -18),
+      ("avb", kAudioDeviceTransportTypeAVB, nil, -18),
+      ("thunderbolt", kAudioDeviceTransportTypeThunderbolt, nil, -18),
+      ("continuityCaptureWired", kAudioDeviceTransportTypeContinuityCaptureWired, nil, -18),
+      ("continuityCaptureWireless", kAudioDeviceTransportTypeContinuityCaptureWireless, nil, -18),
+      ("remoteScreen", 0x7273_6372 /* 'rscr' */, nil, -18),
+      ("remoteStreaming", 0x7273_7472 /* 'rstr' */, nil, -18),
+    ]
+
+  @Test func everyHALTransportGetsTheRuleCeilingThroughTheProductionMapping() throws {
+    for entry in Self.everyTransport {
+      var device = SimulatedCatalog.macSpeakers
+      device.uid = "out-\(entry.name)"
+      device.transport = HALDeviceCatalog.transportName(for: entry.type)
+      device.output?.dataSource = entry.dataSource
+      let setup = ResolvedSetup(
+        output: device.ref, input: SimulatedCatalog.macMicrophone.ref, outChannels: [1, 2],
+        inChannel: 1)
+      let run = try LevelRamp.runLoudness(
+        setup: setup, output: device, input: SimulatedCatalog.macMicrophone,
+        options: PreflightOptions())
+      #expect(run.ceilingDbfs == entry.ceiling, "\(entry.name) (\(device.transport))")
+      // A catalog miss keeps only the recorded transport, which the same mapping produced.
+      if entry.ceiling != -12 {
+        let missed = try LevelRamp.runLoudness(
+          setup: setup, output: nil, input: nil, options: PreflightOptions())
+        #expect(missed.ceilingDbfs == entry.ceiling, "catalog miss: \(entry.name)")
+      }
+    }
+  }
+
+  @Test func theSimulatorReportsTransportsAsTheHALMappingDoes() {
+    // The played-level tests below open the simulator, whose fixtures stand in for the HAL.
+    #expect(
+      SimulatedCatalog.macSpeakers.transport
+        == HALDeviceCatalog.transportName(for: kAudioDeviceTransportTypeBuiltIn))
+    #expect(
+      SimulatedCatalog.macMicrophone.transport
+        == HALDeviceCatalog.transportName(for: kAudioDeviceTransportTypeBuiltIn))
+    #expect(
+      SimulatedCatalog.scarlett.transport
+        == HALDeviceCatalog.transportName(for: kAudioDeviceTransportTypeUSB))
+    #expect(
+      SimulatedCatalog.duplex.transport
+        == HALDeviceCatalog.transportName(for: kAudioDeviceTransportTypeVirtual))
   }
 
   /// What naming a listener lowers the ceiling to. A loop has no ears, so it lowers nothing.

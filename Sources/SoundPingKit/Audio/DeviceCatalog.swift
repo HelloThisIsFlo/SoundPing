@@ -133,7 +133,9 @@ public struct HALDeviceCatalog: DeviceCatalog {
       volumeScalar: volume)
   }
 
-  private static func transportName(for value: UInt32) -> String {
+  /// The transport name SoundPing keys on (the loudness rule reads "bluetooth" and "builtIn").
+  /// Internal so the loudness invariant builds its devices through this same mapping (IN-22).
+  static func transportName(for value: UInt32) -> String {
     switch value {
     case kAudioDeviceTransportTypeBuiltIn: return "builtIn"
     case kAudioDeviceTransportTypeUSB: return "usb"
