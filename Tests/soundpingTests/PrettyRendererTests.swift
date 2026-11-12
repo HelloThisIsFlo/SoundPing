@@ -149,7 +149,7 @@ import Testing
     ] {
       let value = try #require(value)
       let line = try #require(
-        summary.split(separator: "\n").first { $0.contains(label) }, "no \(label) line")
+        summary.split(separator: "\n").first { $0.hasPrefix(label) }, "no \(label) line")
       #expect(line.contains(String(format: "%.3f ms", value.ms)), "\(line)")
       #expect(line.contains(String(format: "%.2f frames", value.frames)), "\(line)")
     }

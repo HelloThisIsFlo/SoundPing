@@ -27,11 +27,18 @@ struct RunCommand: AsyncParsableCommand {
       let request = try options.makeRequest(recipe: recipe, setup: setup)
 
       let ndjson = NDJSONRenderer()
+      let pretty = PrettyRenderer(useColor: Terminal.useColor())
       var finished: RunResult?
       for try await event in RunCoordinator(backend: backend, store: store).run(request) {
         if output.ndjson { try ndjson.write(event) }
-        if output.isDataMode, let progress = Self.progress(for: event) {
-          Output.progressLine(progress)
+        if output.isDataMode {
+          if let progress = Self.progress(for: event) { Output.progressLine(progress) }
+        } else {
+          switch event {
+          case .armed(let info): Output.writeLine(pretty.armedLine(info))
+          case .hit(let record), .rejected(let record): Output.writeLine(pretty.hitLine(record))
+          case .aborted, .finished: break
+          }
         }
         if case .finished(let result) = event { finished = result }
       }
@@ -42,7 +49,8 @@ struct RunCommand: AsyncParsableCommand {
       if output.json {
         try JSONRenderer.write(result)
       } else if !output.ndjson {
-        Output.writeLine(Self.summaryLine(for: result))
+        Output.writeLine("")
+        Output.writeLine(pretty.report(result))
       }
     }
   }
@@ -59,15 +67,5 @@ struct RunCommand: AsyncParsableCommand {
     default:
       return nil
     }
-  }
-
-  /// One line until the full pretty renderer lands.
-  private static func summaryLine(for result: RunResult) -> String {
-    guard let path = result.measured.path, let median = path.median, let jitter = path.jitter else {
-      return "no valid hits (0/\(result.measured.path?.n ?? 0)) \(result.runPath)"
-    }
-    let ms = { (value: Double) in String(format: "%.2f", value) }
-    return
-      "median \(ms(median.ms)) ms (\(String(format: "%.1f", median.frames)) frames), jitter \(ms(jitter.ms)) ms, valid \(path.valid)/\(path.n)  \(result.runPath)"
   }
 }

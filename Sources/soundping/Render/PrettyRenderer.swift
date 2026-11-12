@@ -3,12 +3,171 @@ import SoundPingKit
 
 /// The default output: one line per hit as it lands, then a speed-test-style summary (D-03).
 /// Every method returns a String so the layout is testable; RunCommand prints them.
+///
+/// Rejected hits are never hidden: each prints with its reason (dimmed when color is on) and the
+/// summary counts them by reason.
 struct PrettyRenderer {
   var useColor: Bool
 
-  func armedLine(_ info: ArmedInfo) -> String { "" }
-  func hitLine(_ record: HitRecord) -> String { "" }
-  func summary(_ result: RunResult) -> String { "" }
-  func histogram(_ histogram: Histogram?) -> String { "" }
-  func sparkline(_ hits: [HitRecord]) -> String { "" }
+  private static let sparkBlocks: [Character] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+  private static let rejectedMark: Character = "·"
+  private static let maxBarColumns = 40
+
+  // MARK: live lines
+
+  /// One line before the first hit: what is about to be measured.
+  func armedLine(_ info: ArmedInfo) -> String {
+    let setup = info.setup
+    let route =
+      setup.output.uid == setup.input.uid
+      ? setup.output.name : "\(setup.output.name) → \(setup.input.name)"
+    let simulated = setup.simulated ? ", simulated" : ""
+    let hits = "\(info.parameters.hits) hits after \(info.parameters.warmup) warm-ups"
+    return
+      "\(info.recipe.id): \(route) (\(Int(setup.sampleRate)) Hz, buffer \(setup.bufferFrames)\(simulated)), \(hits)"
+  }
+
+  /// One hit as it lands. A rejected hit shows its reason in place of the numbers.
+  func hitLine(_ record: HitRecord) -> String {
+    let head = String(format: "#%03d  ", record.index) + record.phase.rawValue.padded(to: 7)
+    if let reason = record.rejection {
+      return dim("\(head)  rejected: \(reason.rawValue)")
+    }
+    guard let frames = record.latencyFrames, let ms = record.latencyMs else {
+      return "\(head)  no result"
+    }
+    var line = head + String(format: "  %7.2f frames  %7.3f ms", frames, ms)
+    if let confidence = record.confidence { line += String(format: "  conf %.2f", confidence) }
+    return line
+  }
+
+  // MARK: summary
+
+  /// The whole report printed after the run: summary, histogram and timeline.
+  func report(_ result: RunResult) -> String {
+    var sections = [summary(result)]
+    let bars = histogram(result.histogram)
+    if !bars.isEmpty {
+      sections.append("Latency histogram (frames)\n" + bars)
+    }
+    let timeline = sparkline(result.hits)
+    if !timeline.isEmpty {
+      sections.append("Timeline, one mark per measured hit (· = rejected)\n" + timeline)
+    }
+    return sections.joined(separator: "\n\n")
+  }
+
+  func summary(_ result: RunResult) -> String {
+    var lines: [String] = []
+    let simulated = result.setup.simulated ? " (simulated)" : ""
+    lines.append("Result: \(result.recipe.id)\(simulated)")
+
+    let stats = result.measured.path
+    let fired = stats?.n ?? 0
+    lines.append("valid \(stats?.valid ?? 0)/\(fired)")
+
+    let rejected = rejectionBreakdown(result.rejectedCounts)
+    if !rejected.isEmpty { lines.append("  rejected: \(rejected)") }
+    let warmupRejected = result.hits.filter { $0.phase == .warmup && $0.rejection != nil }.count
+    if warmupRejected > 0 { lines.append("  warm-ups rejected: \(warmupRejected) (not counted)") }
+
+    if let stats, stats.valid > 0 {
+      lines.append(statLine("median", stats.median))
+      lines.append(statLine("jitter", stats.jitter, note: "p5–p95"))
+      lines.append(statLine("p95", stats.p95))
+      lines.append(statLine("max", stats.max))
+    } else {
+      lines.append("no valid hits: nothing to report")
+    }
+
+    let path = result.segments.map { Self.shortName(of: $0) }.joined(separator: " → ")
+    lines.append("Segments: \(path)")
+    lines.append(corrections(result.corrections))
+    lines.append("Saved: \(result.runPath)")
+    return lines.joined(separator: "\n")
+  }
+
+  private func statLine(_ label: String, _ value: StatValue?, note: String? = nil) -> String {
+    guard let value else { return "\(label.padded(to: 7)) -" }
+    var line =
+      label.padded(to: 7) + String(format: "%8.3f ms  %8.2f frames", value.ms, value.frames)
+    if let note { line += "  (\(note))" }
+    return line
+  }
+
+  private func rejectionBreakdown(_ counts: [String: Int]) -> String {
+    // The reasons the engine knows, in declaration order, then anything a newer engine added.
+    let known = RejectionReason.allCases.map(\.rawValue)
+    let order = known + counts.keys.filter { !known.contains($0) }.sorted()
+    return order.compactMap { key in
+      guard let count = counts[key], count > 0 else { return nil }
+      return "\(key) \(count)"
+    }.joined(separator: ", ")
+  }
+
+  private func corrections(_ corrections: [Correction]) -> String {
+    guard !corrections.isEmpty else { return "Corrections: none (raw measurement)" }
+    let items = corrections.map {
+      String(format: "%@ %.3f ms (%@)", $0.name, $0.valueMs, $0.source.rawValue)
+    }
+    return "Corrections: " + items.joined(separator: ", ")
+  }
+
+  /// "Audio output (driver, ...)" and "Cable or air between ..." are too long for one line.
+  private static func shortName(of segment: Segment) -> String {
+    switch segment.id {
+    case "audioOutput": return "Audio output"
+    case "transmission": return "Cable or air"
+    case "audioInput": return "Audio input"
+    default: return segment.name
+    }
+  }
+
+  // MARK: histogram and sparkline
+
+  /// One row per bin: its frame range, a bar of █ proportional to the count (longest bar 40
+  /// columns), and the count. Empty when there is nothing to bin.
+  func histogram(_ histogram: Histogram?) -> String {
+    guard let histogram, let largest = histogram.counts.max(), largest > 0 else { return "" }
+    return histogram.counts.enumerated().map { bin, count in
+      let low = histogram.firstBinStartFrames + Double(bin) * histogram.binWidthFrames
+      let high = histogram.firstBinStartFrames + Double(bin + 1) * histogram.binWidthFrames
+      let columns =
+        count == 0
+        ? 0 : max(1, Int((Double(count) / Double(largest) * Double(Self.maxBarColumns)).rounded()))
+      let bar = String(repeating: "█", count: columns)
+      return String(format: "%8.2f – %8.2f │", low, high) + bar + " \(count)"
+    }.joined(separator: "\n")
+  }
+
+  /// One character per measured hit in hit order, ▁ to █ between the lowest and highest latency;
+  /// · for a rejected hit. Warm-ups and probes are not drawn.
+  func sparkline(_ hits: [HitRecord]) -> String {
+    let measured = hits.filter { $0.phase == .measure }
+    let values = measured.compactMap { $0.rejection == nil ? $0.latencyFrames : nil }
+    guard let low = values.min(), let high = values.max() else {
+      return String(repeating: Self.rejectedMark, count: measured.count)
+    }
+    let top = Double(Self.sparkBlocks.count - 1)
+    return String(
+      measured.map { record -> Character in
+        guard record.rejection == nil, let frames = record.latencyFrames else {
+          return Self.rejectedMark
+        }
+        guard high > low else { return Self.sparkBlocks[Self.sparkBlocks.count / 2] }
+        return Self.sparkBlocks[Int(((frames - low) / (high - low) * top).rounded())]
+      })
+  }
+
+  // MARK: color
+
+  private func dim(_ text: String) -> String {
+    useColor ? "\u{1B}[2m\(text)\u{1B}[0m" : text
+  }
+}
+
+extension String {
+  fileprivate func padded(to width: Int) -> String {
+    count >= width ? self : self + String(repeating: " ", count: width - count)
+  }
 }
