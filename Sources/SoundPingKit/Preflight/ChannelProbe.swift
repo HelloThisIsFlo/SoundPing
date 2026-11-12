@@ -83,9 +83,21 @@ public struct ChannelProbe: Sendable {
     self.resolver = resolver
   }
 
+  /// The listener whose ceiling the probe plays under: the `--listener` override's, else
+  /// headphones when the output device is known to be headphones, else unknown (-18 dBFS). The
+  /// channel is not known yet, so it cannot say whether it is a loopback, but whether the sound
+  /// reaches a person's ears depends on the output device alone (T-01-28). A louder kind than the
+  /// unknown one is never taken.
+  static func listenerKind(
+    options: PreflightOptions, setup: ResolvedSetup, output: DeviceInfo?
+  ) -> ListenerKind {
+    if let override = options.listener { return override }
+    return LevelRamp.outputIsHeadphones(setup: setup, output: output) ? .headphones : .unknown
+  }
+
   /// `setup` names the devices; `inChannel` is ignored and replaced by each of `channels` in turn.
-  /// The ceiling is the `--listener` override's, else the unknown listener's (-18 dBFS): the
-  /// channel is not known yet, so it cannot say whether it is a loopback.
+  /// The ceiling is the `--listener` override's, else the headphone ceiling for known headphones,
+  /// else the unknown listener's (-18 dBFS); see `listenerKind`.
   public func run(
     backend: any AudioBackend, setup: ResolvedSetup, channels: [ChannelInfo],
     options: PreflightOptions = PreflightOptions(), templateId: String = "chirp-loopback"
@@ -95,8 +107,9 @@ public struct ChannelProbe: Sendable {
         "deviceHasNoChannels", "\(setup.input.name) has no input channels to probe",
         context: ["device": setup.input.uid])
     }
-    let listener = options.listener ?? .unknown
-    let ceiling = try LevelRamp.resolveCeiling(kind: listener, maxLevelDbfs: options.maxLevelDbfs)
+    // Refuses a bad `--max-level` before anything plays; replaced once the output device is known.
+    var listener = options.listener ?? .unknown
+    var ceiling = try LevelRamp.resolveCeiling(kind: listener, maxLevelDbfs: options.maxLevelDbfs)
     let nominal = try StimulusLibrary.template(id: templateId, sampleRate: 48_000)
     let checks = Preflight(resolver: resolver)
 
@@ -111,6 +124,14 @@ public struct ChannelProbe: Sendable {
 
       let info = try await backend.open(channelSetup, templates: [nominal])
       let opened = channelSetup
+      if position == 0 {
+        // The output device is the same for every channel, so it is classified once, before the
+        // first sound (CR-02): headphones keep their -30 dBFS ceiling during the probe.
+        listener = Self.listenerKind(
+          options: options, setup: channelSetup, output: info.outputDevice)
+        ceiling = try LevelRamp.resolveCeiling(kind: listener, maxLevelDbfs: options.maxLevelDbfs)
+      }
+      let probeCeiling = ceiling
       do {
         if position == 0 {
           app = try await checks.checkPermission(on: backend).app
@@ -118,7 +139,7 @@ public struct ChannelProbe: Sendable {
         }
         let score = try await withDeadline {
           try await Self.probe(
-            channel: channel, ceiling: ceiling, nominal: nominal, info: info, setup: opened,
+            channel: channel, ceiling: probeCeiling, nominal: nominal, info: info, setup: opened,
             backend: backend)
         }
         anythingHeard = anythingHeard || score.heardSomething

@@ -67,6 +67,28 @@ import Testing
     #expect(probed.result == nil)
   }
 
+  @Test func knownHeadphonesKeepTheirCeilingWhileProbingChannels() {
+    var headphones = SimulatedCatalog.macSpeakers
+    headphones.output?.dataSource = "hdpn"
+    let mic = SimulatedCatalog.macMicrophone
+    let onHeadphones = ResolvedSetup(
+      output: headphones.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1,
+      inChannelName: "Loop 1", autoInChannel: false)
+
+    #expect(
+      ChannelProbe.listenerKind(
+        options: PreflightOptions(), setup: onHeadphones, output: headphones)
+        == .headphones, "a loop-named channel must not lift the headphone ceiling")
+    #expect(
+      ChannelProbe.listenerKind(
+        options: PreflightOptions(), setup: Self.setup, output: Self.scarlett)
+        == .unknown)
+    #expect(
+      ChannelProbe.listenerKind(
+        options: PreflightOptions(listener: .speaker), setup: onHeadphones, output: headphones)
+        == .speaker, "--listener still wins")
+  }
+
   @Test func noChannelHearingAnythingAtTheCeilingIsNothingHeard() async throws {
     let probed = await Self.probe(
       Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 7, seed: 3))

@@ -46,9 +46,16 @@ public struct LevelRamp: Sendable {
 
     let outputTransport = output?.transport ?? setup.output.transport
     if outputTransport == "builtIn" {
-      return output?.output?.dataSource == "hdpn" ? .headphones : .speaker
+      return outputIsHeadphones(setup: setup, output: output) ? .headphones : .speaker
     }
     return .unknown
+  }
+
+  /// Whether the output device is known to be headphones: the built-in output on its headphone
+  /// data source. It depends on the output device alone, whatever the input is.
+  public static func outputIsHeadphones(setup: ResolvedSetup, output: DeviceInfo?) -> Bool {
+    let outputTransport = output?.transport ?? setup.output.transport
+    return outputTransport == "builtIn" && output?.output?.dataSource == "hdpn"
   }
 
   public static func ceilingDbfs(for kind: ListenerKind) -> Double {
