@@ -4,14 +4,14 @@
 
 **SoundPing**
 
-SoundPing is an open-source tool for musicians and audio tinkerers that measures where the latency in their music setup comes from. It started from Flo's own setup, which remains the first test bench. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
+SoundPing is a source-available tool (PolyForm Shield 1.0.0) for musicians and audio tinkerers that measures where the latency in their music setup comes from. It started from Flo's own setup, which remains the first test bench. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
 
 **Core Value:** Trustworthy, comparable latency numbers for each segment of the chain (MIDI transport, Ableton, output processing, speakers/headphones), so a laggy feel can be traced to its cause instead of guessed at.
 
 ### Constraints
 
 - **Platform**: macOS first — CoreAudio/CoreMIDI timing is the point; other OSes aren't ruled out, but not in milestone 1
-- **Open source**: usable by strangers. Devices, MIDI ports and the DAW (Ableton is the reference, not a requirement) are configurable; installing and running it is documented; licence chosen before the first public release
+- **Source-available**: usable by strangers. Devices, MIDI ports and the DAW (Ableton is the reference, not a requirement) are configurable; installing and running it is documented; licence: PolyForm Shield 1.0.0, chosen in Phase 1
 - **DAW-agnostic**: tool-sent MIDI tests work with any app that turns a MIDI note into sound
 - **Accuracy**: timing must be traceable to the audio sample clock; a number that hides an uncorrected offset (e.g. mic delay) is worse than no number
 - **Evolvability**: start as a quick CLI but built around a shared engine that emits hits as live events, so new recipes and the native app plug in without rewrites
@@ -148,7 +148,7 @@ SoundPing is an open-source tool for musicians and audio tinkerers that measures
 | App Sandbox | Breaks the bundled CLI from a terminal; complicates process taps; zero benefit for Developer ID | Hardened runtime + `audio-input` entitlement |
 | `codesign --deep` | Apple discourages it; it mis-signs nested code with the wrong entitlements | `xcodebuild -exportArchive` (developer-id), or sign the inner CLI first, then the app |
 | Apple ID + app-specific password in CI | 2FA friction, tied to a person | App Store Connect API key for `notarytool` |
-| Bundling GPL code (BlackHole, aubio, jack tools) | Forces GPL on SoundPing before the licence is even chosen | Apache/MIT deps only; GPL tools stay dev-side |
+| Bundling GPL code (BlackHole, aubio, jack tools) | Forces GPL on SoundPing, which is PolyForm Shield 1.0.0 | Apache/MIT deps only; GPL tools stay dev-side |
 
 ## 🔀 Stack Patterns by Variant
 
@@ -173,7 +173,7 @@ SoundPing is an open-source tool for musicians and audio tinkerers that measures
 
 ## 📜 Licence check (everything recommended)
 
-| Component | Licence | Shipped? | OK for any SoundPing licence? |
+| Component | Licence | Shipped? | OK under PolyForm Shield 1.0.0? |
 |---|---|---|---|
 | swift-argument-parser, swift-log, Swift stdlib/`Synchronization` | Apache-2.0 | yes | ✅ |
 | Sparkle (optional) | MIT | yes | ✅ |
@@ -182,6 +182,8 @@ SoundPing is an open-source tool for musicians and audio tinkerers that measures
 | OboeTester `LatencyAnalyzer` (if ported) | Apache-2.0 | maybe (ported code) | ✅ with NOTICE attribution |
 | BlackHole | GPL-3.0 | **no** (dev only) | ✅ as long as it's never bundled |
 | aubio / Essentia / jack_delay / jack_iodelay | GPL-3 / AGPL-3 / GPL | **no** | ❌ don't copy code; learn from methods only |
+
+- All shipped dependencies are MIT/Apache-2.0 and compatible with Shield for the rest of the repo; GPL tools stay dev-only and are never bundled.
 
 ## 🔭 Existing tools worth learning from
 

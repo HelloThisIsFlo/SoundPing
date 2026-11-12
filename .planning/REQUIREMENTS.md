@@ -77,7 +77,7 @@ Requirements for milestone 1. Each maps to roadmap phases.
 - [ ] **REL-01**: User can download a signed, notarised DMG from GitHub Releases, built by GitHub Actions on each tag
 - [ ] **REL-02**: User can install with `brew install --cask` from the SoundPing tap; the CLI is linked too
 - [ ] **REL-03**: The app checks for and installs updates via Sparkle from the first release
-- [ ] **REL-04**: The repo has an open-source licence (chosen in the first phase, before any ported code lands), NOTICE attributions, and a README with per-recipe setup guides and stated accuracy per recipe
+- [ ] **REL-04**: The repo has a source-available licence (PolyForm Shield 1.0.0, chosen in the first phase, before any ported code lands), NOTICE attributions, and a README with per-recipe setup guides and stated accuracy per recipe
 
 ## v2 Requirements
 
@@ -100,7 +100,7 @@ Deferred to a future milestone. Tracked but not in the current roadmap.
 | Auto-tuning the setup (buffers, routing) | SoundPing measures; the user decides |
 | Mean-only or single-shot results | Hides jitter, which matters as much as the average |
 | VST/AU plug-in edition | Different product; plug-ins can't measure the whole chain |
-| Telemetry | Open-source tool for strangers; no data leaves the machine |
+| Telemetry | Source-available tool for strangers; no data leaves the machine |
 | Always-on latency monitor | Measurement is a deliberate test run |
 | Injected Mac keypress trigger | Tool-sent MIDI measures the same segment with cleaner timing |
 
