@@ -40,7 +40,10 @@ struct StampEntry: Sendable, Equatable {
 /// of that callback, so a duplex device's input and output stamps can only ever be paired with each
 /// other (WR-03): a side that was skipped leaves its half of the entry empty and shifts nothing.
 /// One writer (the IOProc of the device that owns the ring), any number of readers; the count is
-/// published with a releasing store after the entry is written. The columns come from `calloc`, so
+/// published with a releasing store after the entry is written. Before it touches a slot the writer
+/// also announces the write (`started`, then a release fence), so a reader that copied a slot can
+/// tell afterwards whether a write may have been overwriting it and drop that copy (IN-16, the same
+/// guard `readCapture` has). The columns come from `calloc`, so
 /// pages nobody touched stay virtual: a ring sized for hours costs memory only for the callbacks
 /// that actually happened. A noncopyable struct stored inline in `RTState`, so the audio thread
 /// reaches it without reference counting.
@@ -56,6 +59,8 @@ struct StampRing: ~Copyable, Sendable {
   nonisolated(unsafe) private let outputRateScalars: UnsafeMutablePointer<Double>
   nonisolated(unsafe) private let outputFrameCounts: UnsafeMutablePointer<Int>
   private let written = Atomic<Int>(0)
+  /// Writes begun so far: `written`, or one more while the writer is filling a slot.
+  private let started = Atomic<Int>(0)
 
   init(capacity: Int) {
     self.capacity = Swift.max(1, capacity)
@@ -94,6 +99,8 @@ struct StampRing: ~Copyable, Sendable {
     if input.frames <= 0, output.frames <= 0 { return }
     let n = written.load(ordering: .relaxed)
     let i = n % capacity
+    started.store(n + 1, ordering: .releasing)
+    atomicMemoryFence(ordering: .releasing)
     inputSampleTimes[i] = input.sampleTime
     inputHostTimes[i] = input.hostTime
     inputRateScalars[i] = input.rateScalar
@@ -120,34 +127,55 @@ struct StampRing: ~Copyable, Sendable {
     return entry
   }
 
-  /// The entry with this absolute ordinal, nil once the ring has overwritten it.
+  /// The oldest ordinal no write had begun to overwrite by the time a copy finished. Called after
+  /// the copy: the fence orders the copy's reads before the load of `started`.
+  private func oldestIntactOrdinal() -> Int {
+    atomicMemoryFence(ordering: .acquiring)
+    return started.load(ordering: .acquiring) - capacity
+  }
+
+  /// The entry with this absolute ordinal, nil once the ring has overwritten it (or was
+  /// overwriting it while it was read).
   func entry(at ordinal: Int) -> StampEntry? {
     let n = written.load(ordering: .acquiring)
     guard ordinal >= 0, ordinal < n, n - ordinal <= capacity else { return nil }
-    return read(slot: ordinal % capacity)
+    let entry = read(slot: ordinal % capacity)
+    guard ordinal >= oldestIntactOrdinal() else { return nil }
+    return entry
   }
 
-  /// Every entry still in the ring, oldest first.
+  /// Every entry still in the ring, oldest first. A slot the writer may have been overwriting while
+  /// it was copied is dropped rather than returned torn.
   func snapshot() -> [StampEntry] {
     let n = written.load(ordering: .acquiring)
     let first = Swift.max(0, n - capacity)
     var entries: [StampEntry] = []
     entries.reserveCapacity(n - first)
     for ordinal in first..<n { entries.append(read(slot: ordinal % capacity)) }
-    return entries
+    let intact = Swift.min(n, Swift.max(first, oldestIntactOrdinal()))
+    return Array(entries[(intact - first)...])
   }
 }
 
 /// A fixed-size ring of fault intervals, each a range of sample labels of one direction and a cause
 /// code. Same discipline as `StampRing`: one writer, preallocated, never resized, the count
-/// published with a releasing store after the entry. Entries are appended in the order the writer
-/// found them, never merged: two glitches stay two intervals (WR-01).
+/// published with a releasing store after the entry, and a write announced before it touches a
+/// slot. Entries are appended in the order the writer found them, never merged: two glitches stay
+/// two intervals (WR-01).
+///
+/// Before the writer overwrites a slot it folds that interval's upper bound into `forgottenUpper`
+/// (a running maximum), so a reader knows the whole stretch below it is no longer described, even
+/// when an old interval ends above the lower bound of everything still retained (IN-16).
 struct FaultRing: ~Copyable, Sendable {
   let capacity: Int
   nonisolated(unsafe) private let lowers: UnsafeMutablePointer<Int>
   nonisolated(unsafe) private let uppers: UnsafeMutablePointer<Int>
   nonisolated(unsafe) private let causes: UnsafeMutablePointer<Int>
   private let written = Atomic<Int>(0)
+  /// Writes begun so far: `written`, or one more while the writer is filling a slot.
+  private let started = Atomic<Int>(0)
+  /// The highest upper bound of any interval the ring has overwritten; `Int.min` until it wraps.
+  private let forgottenUpper = Atomic<Int>(Int.min)
 
   init(capacity: Int) {
     self.capacity = Swift.max(1, capacity)
@@ -173,14 +201,26 @@ struct FaultRing: ~Copyable, Sendable {
   func append(lower: Int, upper: Int, cause: Int) {
     let n = written.load(ordering: .relaxed)
     let i = n % capacity
+    if n >= capacity {
+      // One writer: a plain load and store keep the running maximum; `started` publishes it.
+      let old = uppers[i]
+      if old > forgottenUpper.load(ordering: .relaxed) {
+        forgottenUpper.store(old, ordering: .relaxed)
+      }
+    }
+    started.store(n + 1, ordering: .releasing)
+    atomicMemoryFence(ordering: .releasing)
     lowers[i] = lower
     uppers[i] = upper
     causes[i] = cause
     written.store(n + 1, ordering: .releasing)
   }
 
-  /// Every retained fault, oldest first, and whether older ones were overwritten.
-  func retained() -> (entries: [(lower: Int, upper: Int, cause: Int)], wrapped: Bool) {
+  /// Every retained fault, oldest first, and the upper bound of the stretch the ring no longer
+  /// describes (nil while nothing was overwritten). A slot the writer may have been overwriting
+  /// while it was copied is dropped; its interval's upper bound is already folded into the
+  /// forgotten bound by then, so dropping it fails safe.
+  func retained() -> (entries: [(lower: Int, upper: Int, cause: Int)], forgottenUpper: Int?) {
     let n = written.load(ordering: .acquiring)
     let first = Swift.max(0, n - capacity)
     var entries: [(lower: Int, upper: Int, cause: Int)] = []
@@ -189,7 +229,11 @@ struct FaultRing: ~Copyable, Sendable {
       let i = ordinal % capacity
       entries.append((lowers[i], uppers[i], causes[i]))
     }
-    return (entries, first > 0)
+    atomicMemoryFence(ordering: .acquiring)
+    let begun = started.load(ordering: .acquiring)
+    let forgotten = forgottenUpper.load(ordering: .relaxed)
+    let intact = Swift.min(n, Swift.max(first, begun - capacity))
+    return (Array(entries[(intact - first)...]), forgotten == Int.min ? nil : forgotten)
   }
 }
 
@@ -477,9 +521,9 @@ final class RTState: Sendable {
   /// store that follows it, so every fault below those labels is visible by the time the rings are
   /// read. Intervals are tested for overlap, not containment, and never merged.
   ///
-  /// A ring that has overwritten old entries no longer knows what happened below its oldest one. A
-  /// query that reaches below it gets one `logOverwritten` fault for that stretch, so overflow
-  /// rejects a hit instead of letting it through.
+  /// A ring that has overwritten old entries no longer knows what happened below the highest upper
+  /// bound it overwrote. The part of a query below that bound gets one `logOverwritten` fault, so
+  /// overflow rejects a hit instead of letting it through (IN-16).
   func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) -> [FaultInterval] {
     _ = inputNextLabel.load(ordering: .acquiring)
     _ = outputNextLabel.load(ordering: .acquiring)
@@ -499,7 +543,9 @@ final class RTState: Sendable {
     var forgottenBelow: Int64?
     let first = writtenByIOProc.retained()
     let second = writtenByListeners.retained()
-    for (entries, wrapped) in [(first.entries, first.wrapped), (second.entries, second.wrapped)] {
+    for (entries, forgotten) in [
+      (first.entries, first.forgottenUpper), (second.entries, second.forgottenUpper),
+    ] {
       for entry in entries {
         let range = Int64(entry.lower)..<Int64(Swift.max(entry.upper, entry.lower + 1))
         guard range.lowerBound < query.upperBound, range.upperBound > query.lowerBound else {
@@ -513,16 +559,15 @@ final class RTState: Sendable {
         }
         found.append(FaultInterval(direction: direction, frames: range, cause: cause))
       }
-      if wrapped, let oldest = entries.map({ Int64($0.lower) }).min(),
-        query.lowerBound < oldest
-      {
-        forgottenBelow = Swift.max(forgottenBelow ?? oldest, oldest)
+      if let forgotten {
+        forgottenBelow = Swift.max(forgottenBelow ?? Int64(forgotten), Int64(forgotten))
       }
     }
-    if let forgottenBelow {
+    if let forgottenBelow, query.lowerBound < forgottenBelow {
+      let end = Swift.min(query.upperBound, forgottenBelow)
       found.append(
         FaultInterval(
-          direction: direction, frames: query.lowerBound..<forgottenBelow, cause: .logOverwritten))
+          direction: direction, frames: query.lowerBound..<end, cause: .logOverwritten))
     }
     return found
   }

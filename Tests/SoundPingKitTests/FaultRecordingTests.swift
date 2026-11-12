@@ -143,16 +143,66 @@ import Testing
   @Test func aWrappedFaultRingReportsWhatItHasForgottenInsteadOfPassingTheHit() throws {
     let rt = Self.makeState(faultCapacity: 4)
     for i in 0..<6 { rt.inputFaults.append(lower: i * 100, upper: i * 100 + 10, cause: 0) }
-    // Entries 0 and 1 were overwritten; the oldest retained fault starts at 200.
+    // Entries 0 and 1 ([0, 10) and [100, 110)) were overwritten: the ring no longer describes
+    // anything below 110, so that part of a query is reported as forgotten.
     let below = rt.faults(overlappingInput: 0..<150, output: 0..<1)
     #expect(below.contains { $0.cause == .logOverwritten })
-    #expect(below.first { $0.cause == .logOverwritten }?.frames == 0..<200)
+    #expect(below.first { $0.cause == .logOverwritten }?.frames == 0..<110)
 
     // A query that starts at or above the oldest retained fault only gets the real overlaps.
     let above = rt.faults(overlappingInput: 200..<420, output: 0..<1)
     #expect(above.count == 3)
     #expect(above.allSatisfy { $0.cause == .lostFrames })
     #expect(!above.contains { $0.cause == .logOverwritten })
+  }
+
+  @Test func anOverwrittenLongIntervalStaysForgottenAboveTheOldestRetainedLowerBound() throws {
+    // IN-16: a long lost-frames gap followed by more short faults than the ring holds. The gap ends
+    // far above the oldest retained lower bound, so a query inside it must still be rejected.
+    let rt = Self.makeState(faultCapacity: 4)
+    rt.inputFaults.append(lower: 0, upper: 1_000, cause: faultLostFramesCode)
+    for i in 1...4 { rt.inputFaults.append(lower: i * 100, upper: i * 100 + 1, cause: 0) }
+    let inside = rt.faults(overlappingInput: 500..<600, output: 0..<1)
+    #expect(inside.map(\.cause) == [.logOverwritten])
+    #expect(inside.first?.frames == 500..<600, "only the query's own frames are reported")
+    // Above the forgotten stretch nothing is invented.
+    #expect(rt.faults(overlappingInput: 1_000..<1_100, output: 0..<1).isEmpty)
+  }
+
+  @Test func aReaderNeverSeesATornFaultOrStampWhileTheWriterWraps() async throws {
+    // IN-16: a writer that keeps wrapping a small ring while readers copy it. Every fault written
+    // has `upper - lower == 7` and every stamp `hostTime == sampleTime * 3`, so a copy mixing two
+    // writes shows up as a broken relation.
+    let rt = RTState(
+      RTState.Configuration(
+        sampleRate: 48_000, inputSlot: nil, outputSlots: [], templates: [],
+        scheduleCapacity: 1, stampCapacity: 4, faultCapacity: 4))
+    let writes = 200_000
+    let writer = Task.detached {
+      for k in 1...writes {
+        rt.inputFaults.append(lower: k * 10, upper: k * 10 + 7, cause: 0)
+        let side = StampSide(
+          sampleTime: Double(k), hostTime: UInt64(k * 3), rateScalar: 1, frames: 1)
+        rt.inputDeviceStamps.append(input: side, output: StampSide())
+      }
+    }
+    var torn = 0
+    var reads = 0
+    while !writer.isCancelled, reads < 20_000 {
+      reads += 1
+      for entry in rt.inputFaults.retained().entries where entry.upper - entry.lower != 7 {
+        torn += 1
+      }
+      for entry in rt.inputDeviceStamps.snapshot() {
+        if let input = entry.input, input.hostTime != UInt64(input.sampleTime) * 3 { torn += 1 }
+      }
+      if rt.inputFaults.count >= writes { break }
+    }
+    await writer.value
+    #expect(torn == 0, "\(torn) torn copies in \(reads) reads")
+    let final = rt.inputFaults.retained()
+    #expect(final.entries.count == 4)
+    #expect(final.forgottenUpper == (writes - 4) * 10 + 7)
   }
 
   @Test func aRingThatNeverWrappedNeverReportsOverwrittenFrames() throws {
