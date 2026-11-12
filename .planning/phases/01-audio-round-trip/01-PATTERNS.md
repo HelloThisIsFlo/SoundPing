@@ -15,7 +15,7 @@
 | New/Modified File | Role | Data Flow | Reference pattern (01-RESEARCH.md) | Match |
 |---|---|---|---|---|
 | `LICENSE` | config/legal | — | D-17; verbatim PolyForm Shield 1.0.0 from branch `1.0.0` (L526, OQ5 L728) | none (external text) |
-| `CLA.md` | config/legal | — | Harmony Individual CLA v1.0, Option Five (L527, OQ4 L726) | none (external template) |
+| `CLA.md` | config/legal | — | Verbatim copy of Flo's CLA gist e803ee99… (SoundPing-CLA.md) (L527, OQ4 L726) | none (Flo's existing text) |
 | `CONTRIBUTING.md` | docs | — | D-17 | none |
 | `README.md` (modify) | docs | — | D-17 exact licence text; P11 stale intro (L584) | existing file |
 | `.planning/PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `research/STACK.md`, `CLAUDE.md`, `AGENTS.md` (modify) | docs | — | D-17 wording sweep list | existing files |

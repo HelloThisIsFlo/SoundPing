@@ -154,7 +154,7 @@
   - **The built-in mic reports its ~30 ms DSP delay as *stream* latency** (1439 frames, verified). Tools that read only `kAudioDevicePropertyLatency` miss it. Always sum device + stream latency.
   - **The IOProc's two timestamps give two measurable quantities.** One is the label gap of the hardware path. The other is the per-callback output-minus-input offset, i.e. the app-level buffering. Measuring both settles the disputed safety-offset arithmetic on the bench.
   - **`@_noLocks` works on this toolchain** (Swift 6.4.2, verified). It catches refcounting and allocation on the real-time path at compile time.
-  - **The repo is already public on GitHub, with no LICENSE.** D-18 ("before the repo goes public") is already past due, so the licence plan should go first.
+  - **The repo is already public on GitHub, with no LICENSE.** CLA Assistant is already installed and linked to Flo's CLA gist (D-18 done; verified after planning: repo webhook `cla-assistant.io/github/webhook/SoundPing`), so only the LICENSE is missing and the licence plan goes first.
 - 🎯 **Measurement design is settled by tests, not by trust.** Chirp detection is sub-sample on synthetic data. The bench run on Flo's Scarlett (cable loop and "Loop 1/2" channels) plus the MacBook speakers → mic is the exit gate.
 
 **Primary recommendation:** Land the licence + scaffold first, then a walking skeleton that runs `soundping run round-trip --simulate --json` end to end in CI. Then grow the DSP and the HAL backend in parallel, and close with a human-verified bench checkpoint (repeatability + clock self-test).
@@ -524,7 +524,7 @@ flowchart LR
 | Arg parsing / exit codes | Manual `CommandLine` parsing | ArgumentParser `ExitCode(_:)`; usage errors exit `EX_USAGE` (64) | [VERIFIED: ArgumentParser 1.8.2 `Errors.swift:35-57`, `Platform.swift:155-161`] |
 | Atomics | `OSAtomic*` / locks | `Synchronization.Atomic` | Lock-free, `@_noLocks`-clean [VERIFIED] |
 | Licence text | Retyping / paraphrase | Download verbatim from branch `1.0.0` | `master` returns 404 [VERIFIED] |
-| CLA | Writing one | Harmony Individual CLA v1.0, **Option Five** ("any license") | Grants sublicensing + any-licence relicensing [CITED: harmonyagreements.org/docs/ha-combined-v1] |
+| CLA | Writing one | Flo's own Apache-ICLA-style CLA, already in his gist `e803ee99…` (SoundPing-CLA.md) and served by CLA Assistant | Copy it verbatim into CLA.md. Grants sublicensing + relicensing under any terms |
 
 **Key insight:** in this domain, the expensive bugs are silent ones (a wrong edge, a wrong sum, zeros from TCC). Every "don't hand-roll" item above is something Apple already exposes in a form that is easy to test.
 
@@ -579,7 +579,7 @@ flowchart LR
 
 ### P10: The repo is already public
 - **What goes wrong:** code lands publicly with no licence (all rights reserved by default), and D-18's "before public" moment has passed.
-- **How to avoid:** the licence plan runs first. Tell Flo the CLA bot install is due now [VERIFIED: `gh repo view` → `PUBLIC`].
+- **How to avoid:** the licence plan runs first. (CLA Assistant was already installed by Flo before planning; only the LICENSE is missing.) [VERIFIED: `gh repo view` → `PUBLIC`]
 
 ### P11: Stale README
 - **What goes wrong:** the README still describes the dropped "presses keys on the Mac keyboard" idea.
@@ -723,8 +723,8 @@ func percentile(_ sorted: [Double], _ p: Double) -> Double {   // linear interpo
    - Recommendation: headline + calibration = `appRoundTrip` (comparable to RTL Utility / DAW figures), with `path` shown beside it. Confirm after the bench.
 3. **🔐 Terminal.app has no mic usage string** (RESOLVED: plan 01-08's preflight bounds the outcome under any host app, either a prompt attributed to it or `micPermissionDenied` naming it, never silent hits; which of the two Terminal.app gives is a human check in plan 01-09 Task 3, and its answer feeds the Terminal.app line in Phase 7's install docs)
    - Unclear whether TCC prompts for CLIs under Terminal.app. Low impact (Flo uses Ghostty); note it in docs later.
-4. **📜 CLA template wording** (RESOLVED: Flo picks the template and fill-ins at plan 01-01's Task 2 decision checkpoint; plan 01-01 Task 3 queues his read-through of CLA.md as a human check)
-   - Harmony Option Five also requires licensing contributions under the project's licence at submission (Shield). That is compatible with D-17. Flo reviews the final CLA.md (human checkpoint).
+4. **📜 CLA template wording** (RESOLVED: Flo already wrote and approved the CLA in his gist e803ee99…, which CLA Assistant serves; plan 01-01 Task 2 copies it verbatim into CLA.md with a diff gate. No checkpoint, no review step.)
+   - Harmony is no longer used; the Apache-ICLA-style text in Flo's gist already carries the sublicense + any-terms relicensing grant D-17 requires.
 5. **🧾 `Licensor Line of Business:` omission** (RESOLVED: omitted per D-17; plan 01-01 Task 1's LICENSE gate asserts no `Licensor Line of Business:` line after the licence text)
    - The field exists [VERIFIED: Shield text, "Discontinued Products"]. Omitting it means: if Flo stops providing SoundPing, others may compete with that discontinued product. This matches D-17's deliberate choice; surface it once at plan review.
 
