@@ -64,14 +64,63 @@ import Testing
         ])
   }
 
-  @Test func aBackwardJumpCoversTheLabelsBetweenTheNewAndTheExpectedOne() throws {
+  private static func inputWentBack(_ rt: RTState) -> Bool {
+    rt.inputClockWentBack.load(ordering: .relaxed)
+  }
+  private static func outputWentBack(_ rt: RTState) -> Bool {
+    rt.outputClockWentBack.load(ordering: .relaxed)
+  }
+  private static func inputLabel(_ rt: RTState) -> Int { rt.inputNextLabel.load(ordering: .relaxed) }
+  private static func outputLabel(_ rt: RTState) -> Int {
+    rt.outputNextLabel.load(ordering: .relaxed)
+  }
+
+  @Test func aBackwardJumpIsAClockResetAndTheLabelNeverFalls() throws {
+    // IN-17: a restart that resets the sample time is not a fault interval that would poison every
+    // later hit below the old position; it is flagged, and the published label stays where it was.
     let rt = Self.makeState()
     Self.capture(rt, at: 5000)
     Self.capture(rt, at: 5016)
-    Self.capture(rt, at: 5000)  // the clock went back: 5032 expected, 5000 arrived
-    let faults = Self.everyFault(rt)
-    #expect(faults == [FaultInterval(direction: .input, frames: 5000..<5032, cause: .lostFrames)])
-    #expect(faults.allSatisfy { !$0.frames.isEmpty })
+    #expect(!Self.inputWentBack(rt))
+    Self.capture(rt, at: 0)  // the clock went back: 5032 expected, 0 arrived
+    #expect(Self.inputWentBack(rt))
+    #expect(Self.inputLabel(rt) == 5032)
+    #expect(Self.everyFault(rt).isEmpty, "a reset is a device change, not a fault interval")
+    // Later callbacks on the new clock are ignored too: the label never moves back.
+    Self.capture(rt, at: 16)
+    Self.capture(rt, at: 6000)
+    #expect(Self.inputLabel(rt) == 5032)
+    #expect(try rt.readCapture(5000..<5032).count == 32, "what was captured stays readable")
+  }
+
+  @Test func aSmallBackwardStepIsAClockResetToo() throws {
+    let rt = Self.makeState()
+    Self.capture(rt, at: 5000)
+    Self.capture(rt, at: 5015)  // one frame earlier than 5016
+    #expect(Self.inputWentBack(rt))
+    #expect(Self.inputLabel(rt) == 5016)
+    // Half a frame of drift is not a jump.
+    let fine = Self.makeState()
+    Self.capture(fine, at: 5000)
+    Self.capture(fine, at: 5015.6)
+    #expect(!Self.inputWentBack(fine))
+  }
+
+  @Test func anOutputClockThatGoesBackStopsMixingAndKeepsItsLabel() throws {
+    let rt = Self.makeState(shared: false)
+    Self.play(rt, at: 9000)
+    Self.play(rt, at: 9016)
+    Self.play(rt, at: 100)
+    #expect(Self.outputWentBack(rt))
+    #expect(Self.outputLabel(rt) == 9032)
+    #expect(Self.everyFault(rt).isEmpty)
+    #expect(!Self.inputWentBack(rt))
+  }
+
+  @Test func aClockResetIsADeviceChange() {
+    let error = SoundPingError.forDeviceEvent(.sampleClockReset(uid: "interface"))
+    #expect(error.kind == .deviceChanged)
+    #expect(error.code == "sampleClockReset")
   }
 
   @Test func aCallbackWithoutAHostTimeIsAnInvalidTimestampFaultInItsOwnDirection() throws {

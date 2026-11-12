@@ -91,10 +91,12 @@ func ioCycle(
   }
 }
 
-/// Captures the selected input channel into the capture ring at its sample label. A label that is
-/// not where the previous callback left off (beyond half a frame, compared in Double) counts as a
+/// Captures the selected input channel into the capture ring at its sample label. A label ahead of
+/// where the previous callback left off (beyond half a frame, compared in Double) counts as a
 /// discontinuity: the gap is zero-filled and recorded as its own fault interval, which the engine
-/// reads to reject every hit whose window it overlaps (ENG-07, WR-01).
+/// reads to reject every hit whose window it overlaps (ENG-07, WR-01). A label behind it means the
+/// device clock went back (IN-17): that is a restart, not a fault, so the label is not moved back
+/// and the direction stops capturing until the engine ends the run.
 ///
 /// A callback whose time lacks `sampleTimeValid` is not captured at all (IN-08): its frames show up
 /// as a gap at the next valid callback. One without `hostTimeValid` is captured but yields no
@@ -123,6 +125,7 @@ private func captureSide(
   let sampleTime = time.pointee.mSampleTime
   guard sampleTime.isFinite, abs(sampleTime) < 1e15 else { return side }
   let label = nearestLabel(sampleTime)
+  if rt.inputClockWentBack.load(ordering: .relaxed) { return side }
 
   var first = rt.inputFirstLabel.load(ordering: .relaxed)
   if !rt.inputStarted.load(ordering: .relaxed) {
@@ -130,26 +133,27 @@ private func captureSide(
     rt.inputFirstLabel.store(label, ordering: .relaxed)
   } else {
     let expected = rt.inputNextLabel.load(ordering: .relaxed)
-    if abs(sampleTime - Double(expected)) > 0.5 {
-      // Frames that never arrived (or arrived twice) are recorded as their own interval, in input
-      // labels, before the label that follows them is published (WR-01).
-      if label > expected {
-        rt.inputFaults.append(
-          lower: expected, upper: label, cause: faultLostFramesCode)
-        // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
-        let missing = Swift.min(label - expected, capacity)
-        var position = (label - missing - first) % capacity
-        if position < 0 { position += capacity }
-        var filled = 0
-        while filled < missing {
-          rt.capture[position] = 0
-          position += 1
-          if position == capacity { position = 0 }
-          filled += 1
-        }
-      } else {
-        rt.inputFaults.append(
-          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
+    if sampleTime < Double(expected) - 0.5 {
+      // The clock went back (IN-17). Publishing the lower label would put later hits below
+      // positions already used and poison them with one huge interval; the engine ends the run.
+      rt.inputClockWentBack.store(true, ordering: .releasing)
+      return side
+    }
+    if sampleTime > Double(expected) + 0.5 {
+      // Frames that never arrived are recorded as their own interval, in input labels, before the
+      // label that follows them is published (WR-01).
+      rt.inputFaults.append(
+        lower: expected, upper: label, cause: faultLostFramesCode)
+      // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
+      let missing = Swift.min(label - expected, capacity)
+      var position = (label - missing - first) % capacity
+      if position < 0 { position += capacity }
+      var filled = 0
+      while filled < missing {
+        rt.capture[position] = 0
+        position += 1
+        if position == capacity { position = 0 }
+        filled += 1
       }
     }
   }
@@ -220,18 +224,19 @@ private func playSide(
   let frames = Int(head.mDataByteSize) / (headChannels * bytesPerSample)
   guard frames > 0 else { return side }
 
-  // The output direction has the same continuity rule as the input: a label that is not where the
-  // previous callback left off means frames were skipped or repeated, and a chirp that was playing
-  // across them is not the chirp that was scheduled (WR-01).
+  // The output direction has the same continuity rule as the input: a label ahead of where the
+  // previous callback left off means frames were skipped, and a chirp that was playing across them
+  // is not the chirp that was scheduled (WR-01). A label behind it is a clock reset (IN-17): the
+  // label is not moved back and nothing more is mixed, so the buffers stay silent.
+  if rt.outputClockWentBack.load(ordering: .relaxed) { return side }
   if rt.outputStarted.load(ordering: .relaxed) {
     let expected = rt.outputNextLabel.load(ordering: .relaxed)
-    if abs(sampleTime - Double(expected)) > 0.5 {
-      if label > expected {
-        rt.outputFaults.append(lower: expected, upper: label, cause: faultLostFramesCode)
-      } else {
-        rt.outputFaults.append(
-          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
-      }
+    if sampleTime < Double(expected) - 0.5 {
+      rt.outputClockWentBack.store(true, ordering: .releasing)
+      return side
+    }
+    if sampleTime > Double(expected) + 0.5 {
+      rt.outputFaults.append(lower: expected, upper: label, cause: faultLostFramesCode)
     }
   }
 

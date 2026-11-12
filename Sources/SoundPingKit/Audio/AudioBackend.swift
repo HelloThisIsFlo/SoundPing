@@ -76,6 +76,9 @@ public enum DeviceEvent: Sendable, Equatable {
   /// the run started on, so the sound may now reach someone's ears too loud (WR-14). `property` is
   /// `dataSource` or `jackIsConnected`; `from` and `to` are the values ("none" when unreadable).
   case outputRouteChanged(uid: String, property: String, from: String, to: String)
+  /// The device's sample clock went backwards mid-run, as after an IO restart (IN-17). Labels never
+  /// fall, so the run cannot go on measuring against the positions it already used.
+  case sampleClockReset(uid: String)
 }
 
 public struct BackendInfo: Sendable, Equatable {

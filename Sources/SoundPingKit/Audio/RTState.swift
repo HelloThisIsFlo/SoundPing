@@ -283,6 +283,14 @@ final class RTState: Sendable {
 
   let outputNextLabel = Atomic<Int>(0)
   let outputStarted = Atomic<Bool>(false)
+
+  // MARK: Clock resets
+
+  /// Set by the IOProc when a direction's sample time went backwards, as after an IO restart that
+  /// reset the device clock (IN-17). Labels never fall: the lower label is not published, nothing
+  /// more is captured or mixed in that direction, and the engine ends the run as a device change.
+  let inputClockWentBack = Atomic<Bool>(false)
+  let outputClockWentBack = Atomic<Bool>(false)
   let outputSlotCount: Int
   nonisolated(unsafe) let outputSlots: UnsafeMutablePointer<ChannelSlot>
 

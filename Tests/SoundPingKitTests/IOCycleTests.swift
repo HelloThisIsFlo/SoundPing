@@ -300,8 +300,12 @@ private func scope(streams: [Int]) -> ScopeInfo {
   }
 
   @Test func continuityIsComparedInDoubleWithAHalfFrameTolerance() throws {
-    // Exactly half a frame off is still continuous; anything past it is a discontinuity.
-    for (offset, gaps) in [(0.0, 0), (0.5, 0), (-0.5, 0), (0.75, 1), (-0.75, 1), (1.0, 1)] {
+    // Exactly half a frame off is still continuous; anything past it is a discontinuity: lost
+    // frames ahead, a clock reset behind (IN-17), which is flagged rather than recorded as a gap.
+    for (offset, gaps, reset) in [
+      (0.0, 0, false), (0.5, 0, false), (-0.5, 0, false), (0.75, 1, false), (-0.75, 0, true),
+      (1.0, 1, false),
+    ] {
       let rt = try Self.makeState()
       let input = SyntheticBuffers(widths: [2, 4], frames: 16)
       let t1 = timeStamp(sample: 9000)
@@ -309,6 +313,8 @@ private func scope(streams: [Int]) -> ScopeInfo {
       captureCycle(rt, input, t1)
       captureCycle(rt, input, t2)
       #expect(Self.everyFault(rt).count == gaps, "offset \(offset)")
+      let wentBack = rt.inputClockWentBack.load(ordering: .relaxed)
+      #expect(wentBack == reset, "offset \(offset)")
     }
   }
 

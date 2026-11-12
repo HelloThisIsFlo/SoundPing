@@ -52,6 +52,7 @@ public final class HALBackend: AudioBackend {
     var info: BackendInfo?
     var sampleRate = 0.0
     var stallReported = false
+    var clockResetReported = false
     var stopped = false
     var listeners: DeviceListeners?
     var eventStream: AsyncStream<DeviceEvent>
@@ -69,6 +70,7 @@ public final class HALBackend: AudioBackend {
       }
       stopped = false
       stallReported = false
+      clockResetReported = false
     }
   }
 
@@ -499,6 +501,8 @@ public final class HALBackend: AudioBackend {
     var lastNext = rt.inputNextLabel.load(ordering: .acquiring)
     var lastProgress = clock.now
     while true {
+      // A clock that went back never brings the labels to the target (IN-17): say so and end here.
+      if let error = clockResetError(rt) { throw error }
       let next = rt.inputNextLabel.load(ordering: .acquiring)
       if Int64(next) >= target { return }
       if next != lastNext {
@@ -509,6 +513,22 @@ public final class HALBackend: AudioBackend {
       }
       try await Task.sleep(for: Self.pollInterval)
     }
+  }
+
+  /// The device error for a sample clock that went back, announced once on the event stream as
+  /// well; nil while both clocks only move forward.
+  private func clockResetError(_ rt: RTState) -> SoundPingError? {
+    let input = rt.inputClockWentBack.load(ordering: .acquiring)
+    let output = rt.outputClockWentBack.load(ordering: .acquiring)
+    guard input || output else { return nil }
+    let (uid, first) = state.withLock { state -> (String, Bool) in
+      let first = !state.clockResetReported
+      state.clockResetReported = true
+      return (input ? state.inputUID : state.outputUID, first)
+    }
+    let event = DeviceEvent.sampleClockReset(uid: uid)
+    if first { eventSink.yield(event) }
+    return SoundPingError.forDeviceEvent(event)
   }
 
   /// The capture position stood still: the device stopped delivering audio. Said once; the

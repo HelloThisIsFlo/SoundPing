@@ -80,6 +80,11 @@ extension SoundPingError {
           "fix":
             "leave the output as it is (for example do not plug or unplug headphones) during the run, then rerun",
         ])
+    case .sampleClockReset(let uid):
+      return .deviceChanged(
+        "sampleClockReset",
+        "device '\(uid)' restarted its audio: its sample clock went backwards during the run",
+        context: ["uid": uid])
     }
   }
 }
