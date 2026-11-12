@@ -2,10 +2,10 @@
 phase: "01"
 slug: "audio-round-trip"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-11"
 ---
 
@@ -40,24 +40,24 @@ created: "2026-11-11"
 
 ## Per-Task Verification Map
 
-Task IDs are filled in once plans exist; rows are keyed by requirement until then.
+Rows are keyed by requirement; Plan lists every plan that declares it (audited 2026-11-12 after all 10 plans merged; full suite 238 tests green + `ci-sim: OK`).
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | TBD | ENG-01 | — | Ambiguous device names list candidates, never guess | unit | `swift test --filter ResolverTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-01 | — | N/A | hardware smoke | `SOUNDPING_HW=1 swift test --filter HardwareDevicesTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-02 | — | N/A | sim integration | `swift test --filter RunStreamTests` + `scripts/ci-sim.sh` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-03 | — | Denied mic → `micPermissionDenied` naming the owning app | sim | `swift test --filter PreflightTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-04 | — | N/A | unit | `swift test --filter SchedulerTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-05 | — | N/A | sim | `swift test --filter SimulationRecoveryTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-06 | — | N/A | unit | `swift test --filter ResultSchemaTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ENG-07 | — | Mid-run device change aborts with named cause | sim | `swift test --filter AbortTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | RES-01 | — | N/A | unit | `swift test --filter StatsTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | RES-02 | — | N/A | unit | `swift test --filter ReportedLatencyTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | CAL-01 | — | N/A | unit | `swift test --filter CorrelatorTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | CAL-02 | — | N/A | unit | `swift test --filter CalibrationStoreTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | CAL-03 | — | N/A | unit + sim | `swift test --filter ClockTests` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | RUN-01 | Slug escape | `../x` label never escapes the store | unit | `swift test --filter RunStoreTests` | ❌ W0 | ⬜ pending |
+| — | 01-05 | 4 | ENG-01 | — | Ambiguous device names list candidates, never guess | unit | `swift test --filter ResolverTests` | ✅ | ✅ green |
+| — | 01-05 | 4 | ENG-01 | — | N/A | hardware smoke | `SOUNDPING_HW=1 swift test --filter HardwareDevicesTests` | ✅ | ✅ green (on Flo's Mac, 01-05) |
+| — | 01-02, 01-03, 01-07 | 2–6 | ENG-02 | — | N/A | sim integration | `swift test --filter RunStreamTests` + `scripts/ci-sim.sh` | ✅ | ✅ green |
+| — | 01-08 | 7 | ENG-03 | — | Denied mic → `micPermissionDenied` naming the owning app | sim | `swift test --filter PreflightTests` | ✅ | ✅ green |
+| — | 01-02, 01-10 | 2–3 | ENG-04 | — | N/A | unit | `swift test --filter SchedulerTests` | ✅ | ✅ green |
+| — | 01-01, 01-02, 01-04, 01-08 | 1–7 | ENG-05 | — | N/A | sim | `swift test --filter SimulationRecoveryTests` | ✅ | ✅ green |
+| — | 01-02, 01-06, 01-10 | 2–5 | ENG-06 | — | N/A | unit | `swift test --filter ResultSchemaTests` | ✅ | ✅ green |
+| — | 01-07 | 6 | ENG-07 | — | Mid-run device change aborts with named cause | sim | `swift test --filter AbortTests` | ✅ | ✅ green |
+| — | 01-02, 01-03, 01-04 | 2–4 | RES-01 | — | N/A | unit | `swift test --filter StatsTests` | ✅ | ✅ green |
+| — | 01-05, 01-06 | 4–5 | RES-02 | — | N/A | unit | `swift test --filter ReportedLatencyTests` | ✅ | ✅ green |
+| — | 01-04, 01-07, 01-09 | 3–8 | CAL-01 | — | N/A | unit | `swift test --filter CorrelatorTests` | ✅ | ✅ green |
+| — | 01-06 | 5 | CAL-02 | — | N/A | unit | `swift test --filter CalibrationStoreTests` | ✅ | ✅ green |
+| — | 01-06, 01-09 | 5–8 | CAL-03 | — | N/A | unit + sim | `swift test --filter ClockTests` | ✅ | ✅ green |
+| — | 01-02, 01-10 | 2–3 | RUN-01 | Slug escape | `../x` label never escapes the store | unit | `swift test --filter RunStoreTests` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -65,11 +65,11 @@ Task IDs are filled in once plans exist; rows are keyed by requirement until the
 
 ## Wave 0 Requirements
 
-- [ ] `Package.swift` + `Tests/SoundPingKitTests/` skeleton with one passing test
-- [ ] `scripts/ci-sim.sh` — runs `soundping run round-trip --simulate --json --store "$TMP"` and asserts with `python3 -c` (no extra deps)
-- [ ] `.github/workflows/ci.yml` on `macos-26` — `swift test` + `scripts/ci-sim.sh`
-- [ ] Shared fixtures — synthetic chirp generator, fake device properties (Scarlett + MacBook values), fake PermissionProbe
-- [ ] `scripts/bench.sh` — the human bench procedure (prints commands + expected ranges)
+- [x] `Package.swift` + `Tests/SoundPingKitTests/` skeleton with one passing test
+- [x] `scripts/ci-sim.sh` — runs `soundping run round-trip --simulate --json --store "$TMP"` and asserts with `python3 -c` (no extra deps)
+- [x] `.github/workflows/ci.yml` on `macos-26` — `swift test` + `scripts/ci-sim.sh`
+- [x] Shared fixtures — synthetic chirp generator, fake device properties (Scarlett + MacBook values), fake PermissionProbe
+- [x] `scripts/bench.sh` — the human bench procedure (prints commands + expected ranges)
 
 ---
 
@@ -77,20 +77,28 @@ Task IDs are filled in once plans exist; rows are keyed by requirement until the
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Real mic denial names Ghostty | ENG-03 | Needs real TCC state | `tccutil reset Microphone com.mitchellh.ghostty`, run, confirm message names Ghostty, re-grant |
-| Unplug / change sample rate mid-run aborts | ENG-07 | Needs physical device | Start a run, change rate in Audio MIDI Setup or unplug; expect named abort |
-| Two loopback runs agree within 1–2 samples | CAL-01 | Needs Scarlett loopback cable | `scripts/bench.sh repeatability` |
-| Host-clock self-test passes on hardware (exit gate) | CAL-03 | Needs real HAL timestamps | `swift run soundping selftest clock --setup scarlett-loop --json` |
+| Real mic denial names Ghostty | ENG-03 | Needs real TCC state | ⬜ open — `tccutil reset Microphone com.mitchellh.ghostty`, run, confirm message names Ghostty, re-grant |
+| Unplug / change sample rate mid-run aborts | ENG-07 | Needs physical device | ⬜ open — start a run, change rate in Audio MIDI Setup or unplug; expect named abort, exit 75 (listener wiring proven in sim + register/remove on real device) |
+| Two loopback runs agree within 1–2 samples | CAL-01 | Needs Scarlett loopback | ✅ `just bench`: 311 vs 311 frames (01-BENCH.md); `HardwareRoundTripTests` green on hardware (01-07) |
+| Host-clock self-test passes on hardware (exit gate) | CAL-03 | Needs real HAL timestamps | ✅ `just bench`: median Δ −0.00003, p95 0.014 frames (01-BENCH.md) |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated 2026-11-12 (automated coverage complete; 2 manual-only checks open)
+
+## Validation Audit 2026-11-12
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
