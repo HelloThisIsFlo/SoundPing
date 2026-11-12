@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Runs a recipe against an `AudioBackend` and narrates it as a stream of `RunEvent`s (D-03).
 /// Every renderer, the saved run.json and the later app read this one stream.
@@ -27,6 +28,25 @@ public actor RunCoordinator {
   }
 }
 
+/// Input frames an audio-thread overload touched, written by the device-event listener and read
+/// by the measuring loop.
+private final class FaultMonitor: Sendable {
+  private let overloads = Mutex<[Int64]>([])
+
+  func recordOverload(atInputFrame frame: Int64) {
+    overloads.withLock { $0.append(frame) }
+  }
+
+  func hasOverload(in range: Range<Int64>) -> Bool {
+    overloads.withLock { $0.contains(where: range.contains) }
+  }
+}
+
+private enum Outcome: Sendable {
+  case measured(RunResult)
+  case eventsEnded
+}
+
 /// One run, start to finish. Never sleeps on the wall clock: it waits on sample positions.
 private struct Session: Sendable {
   let backend: any AudioBackend
@@ -37,11 +57,12 @@ private struct Session: Sendable {
   func run() async throws {
     let parameters = request.parameters
     let nominal = try StimulusLibrary.template(id: parameters.templateId, sampleRate: 48_000)
+    try HitScheduler.validate(parameters, templateDurationMs: nominal.durationMs)
 
     let result: RunResult
     do {
       let info = try await backend.open(request.setup, templates: [nominal])
-      result = try await measure(info: info, nominal: nominal)
+      result = try await supervise(info: info, nominal: nominal)
       await backend.stop()
     } catch {
       await backend.stop()
@@ -50,7 +71,65 @@ private struct Session: Sendable {
     continuation.yield(.finished(result))
   }
 
-  private func measure(info: BackendInfo, nominal: StimulusTemplate) async throws -> RunResult {
+  /// Measures while listening for device events; a device change aborts the run (ENG-07).
+  private func supervise(info: BackendInfo, nominal: StimulusTemplate) async throws -> RunResult {
+    let monitor = FaultMonitor()
+    let backend = self.backend
+    let continuation = self.continuation
+    return try await withThrowingTaskGroup(of: Outcome.self) { group in
+      group.addTask {
+        for await event in backend.events {
+          if case .overload(_, let frame) = event {
+            monitor.recordOverload(atInputFrame: frame)
+            continue
+          }
+          let error = Session.abortError(for: event)
+          continuation.yield(.aborted(error))
+          throw error
+        }
+        return .eventsEnded
+      }
+      group.addTask {
+        .measured(try await measure(info: info, nominal: nominal, monitor: monitor))
+      }
+      while let outcome = try await group.next() {
+        if case .measured(let result) = outcome {
+          group.cancelAll()
+          return result
+        }
+      }
+      throw SoundPingError.internalFailure("noResult", "the run ended without a result")
+    }
+  }
+
+  private static func abortError(for event: DeviceEvent) -> SoundPingError {
+    switch event {
+    case .gone(let uid):
+      return .deviceChanged(
+        "deviceGone", "device '\(uid)' disappeared during the run", context: ["uid": uid])
+    case .sampleRateChanged(let uid, let from, let to):
+      return .deviceChanged(
+        "sampleRateChanged", "device '\(uid)' changed sample rate from \(from) to \(to) Hz",
+        context: ["uid": uid, "from": String(from), "to": String(to)])
+    case .bufferSizeChanged(let uid, let from, let to):
+      return .deviceChanged(
+        "bufferSizeChanged", "device '\(uid)' changed buffer size from \(from) to \(to) frames",
+        context: ["uid": uid, "from": String(from), "to": String(to)])
+    case .streamConfigChanged(let uid):
+      return .deviceChanged(
+        "streamConfigChanged", "device '\(uid)' changed its stream configuration",
+        context: ["uid": uid])
+    case .ioStopped(let uid):
+      return .deviceChanged(
+        "ioStopped", "device '\(uid)' stopped unexpectedly", context: ["uid": uid])
+    case .overload(let uid, _):
+      return .internalFailure("unexpectedOverload", "overload on '\(uid)' is not an abort")
+    }
+  }
+
+  private func measure(info: BackendInfo, nominal: StimulusTemplate, monitor: FaultMonitor)
+    async throws -> RunResult
+  {
     let parameters = request.parameters
     let recipe = request.recipe
     let sampleRate = info.sampleRate
@@ -69,18 +148,12 @@ private struct Session: Sendable {
 
     try await backend.start()
     let level = parameters.levelDbfs ?? recipe.startLevelDbfs
-    let gain = Float(pow(10, level / 20))
-
-    // Slice stub: evenly spaced hits at the midpoint of the spacing range, the first 100 ms in.
-    let startFrame = await backend.currentOutputFrame()
-    let gapFrames = Int64(
-      ((parameters.spacingMinMs + parameters.spacingMaxMs) / 2 / 1000 * sampleRate).rounded())
-    let firstFrame = startFrame + Int64((0.1 * sampleRate).rounded())
-    let scheduled = (0..<parameters.hits).map {
-      ScheduledHit(
-        index: $0, outputFrame: firstFrame + Int64($0) * gapFrames, gain: gain,
-        templateId: template.id)
-    }
+    let scheduled = HitScheduler.schedule(
+      parameters: parameters,
+      startFrame: await backend.currentOutputFrame(),
+      sampleRate: sampleRate,
+      gain: Float(pow(10, level / 20)),
+      templateId: template.id)
     try await backend.schedule(scheduled)
 
     let correlator = Correlator(template: template)
@@ -90,11 +163,22 @@ private struct Session: Sendable {
       let end = hit.outputFrame + maxLatencyFrames + templateFrames
       try await backend.waitUntilCaptured(throughInputFrame: end)
       let range = hit.outputFrame..<end
-      let window = try await backend.capture(range)
-      let stamps = await backend.stamps(covering: range)
 
-      var record = HitRecord(index: hit.index, phase: .measure, outputFrame: hit.outputFrame)
-      switch correlator.detect(window: window, windowStartFrame: hit.outputFrame, stamps: stamps) {
+      var record = HitRecord(
+        index: hit.index,
+        phase: HitScheduler.phase(forHit: hit.index, warmup: parameters.warmup),
+        outputFrame: hit.outputFrame)
+      let detection: Detection
+      if monitor.hasOverload(in: range) {
+        detection = .rejected(.discontinuity)
+      } else {
+        let window = try await backend.capture(range)
+        let stamps = await backend.stamps(covering: range)
+        detection = correlator.detect(
+          window: window, windowStartFrame: hit.outputFrame, stamps: stamps)
+      }
+
+      switch detection {
       case .found(let frame, let confidence, let psr, _):
         let latency = frame - Double(hit.outputFrame)
         record.latencyFrames = latency
@@ -113,6 +197,7 @@ private struct Session: Sendable {
       records: records, info: info, snapshot: snapshot, runId: runId, createdAt: createdAt)
   }
 
+  /// Warm-ups stay in hits[] but never enter a statistic (D-04).
   private func finish(
     records: [HitRecord], info: BackendInfo, snapshot: SetupSnapshot, runId: String,
     createdAt: Date
