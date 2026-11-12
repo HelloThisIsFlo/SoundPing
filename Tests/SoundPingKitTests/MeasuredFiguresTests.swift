@@ -51,6 +51,8 @@ import Testing
     let measured = result.measured
 
     #expect(measured.domain == .sample)
+    // The stored marker the calibration record keys its value on (unchanged since plan 01-06).
+    // Nothing user-facing leads with it; see PrettyRendererTests and RunStoreTests.
     #expect(measured.headline == .appRoundTrip)
     let path = try #require(measured.path?.median)
     let ioOffset = try #require(measured.ioOffset?.median)

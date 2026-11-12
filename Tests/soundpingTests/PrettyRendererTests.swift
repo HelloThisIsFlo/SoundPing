@@ -154,6 +154,9 @@ import Testing
       #expect(line.contains(String(format: "%.2f frames", value.frames)), "\(line)")
     }
     #expect(summary.contains("p5–p95"), "jitter names its percentile span")
+    #expect(
+      summary.contains("Hardware path, per-hit statistics"),
+      "the statistics say which figure they describe: \(summary)")
     #expect(summary.contains("Audio output → Cable or air → Audio input"), "\(summary)")
     #expect(summary.contains("Corrections: none (raw measurement)"), "\(summary)")
     #expect(summary.contains(result.runPath), "\(summary)")

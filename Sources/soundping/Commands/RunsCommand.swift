@@ -50,20 +50,32 @@ struct RunsCommand: AsyncParsableCommand {
       FileHandle.standardOutput.write(data)
     }
 
-    private static func writeTable(_ runs: [RunListing]) {
-      guard !runs.isEmpty else {
-        print("no runs yet")
-        return
-      }
-      let width = runs.map(\.runId.count).max() ?? 0
+    /// One row per run: BUFFER (SoundPing's own buffer part, calculated), PATH (the measured
+    /// hardware path, the column runs are compared by) and TOTAL (path + buffer). None of the
+    /// three is "the" number; a two-device run has a PATH only.
+    static func table(_ runs: [RunListing]) -> [String] {
+      guard !runs.isEmpty else { return ["no runs yet"] }
+      let ms = { (value: Double?) in value.map { String(format: "%.2f ms", $0) } ?? "-" }
       let stamp = ISO8601DateFormatter()
-      for run in runs {
-        let median = run.medianMs.map { String(format: "%.2f ms", $0) } ?? "-"
-        let id = run.runId.padding(toLength: width, withPad: " ", startingAt: 0)
-        print(
-          "\(id)  \(stamp.string(from: run.createdAt))  \(run.label ?? "-")  \(median)  \(run.valid)/\(run.n)"
-        )
+      let rows = runs.map { run in
+        [
+          run.runId, stamp.string(from: run.createdAt), run.label ?? "-", ms(run.bufferMs),
+          ms(run.pathMs), ms(run.totalMs), "\(run.valid)/\(run.n)",
+        ]
       }
+      let header = ["RUN", "WHEN", "LABEL", "BUFFER", "PATH", "TOTAL", "VALID"]
+      let widths = header.indices.map { column in
+        ([header] + rows).map { $0[column].count }.max() ?? 0
+      }
+      return ([header] + rows).map { row in
+        row.indices.map { row[$0].padding(toLength: widths[$0], withPad: " ", startingAt: 0) }
+          .joined(separator: "  ")
+          .trimmingCharacters(in: .whitespaces)
+      }
+    }
+
+    private static func writeTable(_ runs: [RunListing]) {
+      for line in table(runs) { print(line) }
     }
   }
 
@@ -98,16 +110,24 @@ struct RunsCommand: AsyncParsableCommand {
       }
     }
 
-    private static func writeSummary(_ result: RunResult) {
+    static func summaryLines(_ result: RunResult) -> [String] {
       let ms = { (value: Double?) in value.map { String(format: "%.2f ms", $0) } ?? "-" }
       let stats = result.measured.path
-      print("recipe   \(result.recipe.id)")
-      print("label    \(result.label ?? "-")")
-      print("tags     \(result.tags.isEmpty ? "-" : result.tags.joined(separator: ", "))")
-      print("median   \(ms(stats?.median?.ms))")
-      print("jitter   \(ms(stats?.jitter?.ms))")
-      print("valid    \(stats?.valid ?? 0)/\(stats?.n ?? 0)")
-      print("path     \(result.runPath)")
+      return [
+        "recipe   \(result.recipe.id)",
+        "label    \(result.label ?? "-")",
+        "tags     \(result.tags.isEmpty ? "-" : result.tags.joined(separator: ", "))",
+        "buffer   \(ms(result.measured.ioOffset?.median?.ms))",
+        "path     \(ms(stats?.median?.ms))",
+        "total    \(ms(result.measured.appRoundTrip?.median?.ms))",
+        "jitter   \(ms(stats?.jitter?.ms)) (path, p5–p95)",
+        "valid    \(stats?.valid ?? 0)/\(stats?.n ?? 0)",
+        "folder   \(result.runPath)",
+      ]
+    }
+
+    private static func writeSummary(_ result: RunResult) {
+      for line in summaryLines(result) { print(line) }
     }
   }
 }

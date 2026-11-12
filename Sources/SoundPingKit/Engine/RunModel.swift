@@ -95,6 +95,10 @@ public enum MeasurementKind: String, Codable, Sendable { case path, appRoundTrip
 public enum TimeDomain: String, Codable, Sendable { case sample, host }
 
 public struct Measured: Codable, Sendable, Equatable {
+  /// Which figure the calibration record keys its stored value on (plan 01-06). It is a stored
+  /// marker, not "the number": no user-facing output leads with it. Result screens and
+  /// `runs list` show the hardware path, SoundPing's buffer part and the total side by side
+  /// (Phase 1 decision, PROJECT.md Key Decisions). Kept in run.json so the schema stays stable.
   public var headline: MeasurementKind
   public var domain: TimeDomain
   public var path: SummaryStats?
@@ -112,7 +116,7 @@ public struct Measured: Codable, Sendable, Equatable {
     self.ioOffset = ioOffset
   }
 
-  /// The statistics of the number this run leads with.
+  /// The statistics of the figure the calibration record is keyed on. Not for display.
   public var headlineStats: SummaryStats? {
     switch headline {
     case .path: return path

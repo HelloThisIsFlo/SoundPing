@@ -7,22 +7,34 @@ public struct RunListing: Codable, Sendable, Equatable {
   public var recipe: String
   public var label: String?
   public var tags: [String]
-  /// Headline median in milliseconds; nil when the run produced no valid hit.
-  public var medianMs: Double?
+  /// SoundPing's own I/O buffer in frames when the run happened.
+  public var bufferFrames: Int
+  /// SoundPing's buffer part in milliseconds (both buffers plus both safety offsets); nil for a
+  /// two-device run, where it is not defined.
+  public var bufferMs: Double?
+  /// Median of the measured hardware path in milliseconds; nil when the run produced no valid
+  /// hit. The primary column: the one runs are compared by where a single value is needed.
+  public var pathMs: Double?
+  /// Median of the total (path + buffer part) in milliseconds; nil for a two-device run.
+  public var totalMs: Double?
   public var valid: Int
   public var n: Int
   public var runPath: String
 
   public init(
     runId: String, createdAt: Date, recipe: String, label: String?, tags: [String],
-    medianMs: Double?, valid: Int, n: Int, runPath: String
+    bufferFrames: Int, bufferMs: Double?, pathMs: Double?, totalMs: Double?, valid: Int, n: Int,
+    runPath: String
   ) {
     self.runId = runId
     self.createdAt = createdAt
     self.recipe = recipe
     self.label = label
     self.tags = tags
-    self.medianMs = medianMs
+    self.bufferFrames = bufferFrames
+    self.bufferMs = bufferMs
+    self.pathMs = pathMs
+    self.totalMs = totalMs
     self.valid = valid
     self.n = n
     self.runPath = runPath
@@ -156,12 +168,17 @@ public struct RunStore: Sendable {
       guard let data = try? Data(contentsOf: file),
         let result = try? RunJSON.decoder().decode(RunResult.self, from: data)
       else { continue }
-      let stats = result.measured.headlineStats ?? result.measured.path
+      // Three figures, none privileged: the hardware path (measured), SoundPing's buffer part
+      // and the total they add up to. A two-device run has only the host-measured path.
+      let measured = result.measured
+      let stats = measured.path
       rows.append(
         RunListing(
           runId: folder.lastPathComponent, createdAt: result.createdAt, recipe: result.recipe.id,
-          label: result.label, tags: result.tags, medianMs: stats?.median?.ms,
-          valid: stats?.valid ?? 0, n: stats?.n ?? 0, runPath: folder.path))
+          label: result.label, tags: result.tags, bufferFrames: result.setup.bufferFrames,
+          bufferMs: measured.ioOffset?.median?.ms, pathMs: stats?.median?.ms,
+          totalMs: measured.appRoundTrip?.median?.ms, valid: stats?.valid ?? 0, n: stats?.n ?? 0,
+          runPath: folder.path))
     }
     return rows.sorted {
       $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.runId < $1.runId
