@@ -20,6 +20,10 @@ sim *ARGS:
 hw-test:
     SOUNDPING_HW=1 swift test --filter Hardware
 
+# Measure the Phase 1 exit gates on real hardware (the loop on an audio interface); see scripts/bench.sh
+bench:
+    scripts/bench.sh
+
 # Format Sources and Tests in place
 fmt:
     swift format --in-place --recursive Sources Tests
