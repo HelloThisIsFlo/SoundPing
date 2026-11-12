@@ -62,7 +62,13 @@ import Testing
 
     #expect(collected.armed != nil, "the first event is armed")
     let result = try #require(collected.finished, "the last event is finished")
-    #expect(collected.events.count == 27)
+    // armed, 25 hits, the same-device clock self-test, finished.
+    #expect(collected.events.count == 28)
+    if case .selfTest(let selfTest) = collected.events[collected.events.count - 2] {
+      #expect(selfTest.pass)
+    } else {
+      Issue.record("the event before finished is the clock self-test")
+    }
 
     let hitEvents = collected.hitEvents
     #expect(hitEvents.count == 25)

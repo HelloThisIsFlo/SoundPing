@@ -15,12 +15,12 @@ Requirements for milestone 1. Each maps to roadmap phases.
 - [ ] **ENG-07**: A running test aborts with a clear reason if a device disappears or its sample rate or buffer size changes mid-run
 - [ ] **ENG-04**: Hits fire with randomised spacing; declared warm-up hits are discarded
 - [ ] **ENG-05**: User can run any recipe with `--simulate` against fake hardware with injected latency and jitter (no gear needed; used by CI)
-- [ ] **ENG-06**: Every result states which chain segments its recipe covers and which corrections it applied, with each correction's source (measured, HAL-reported, or none)
+- [x] **ENG-06**: Every result states which chain segments its recipe covers and which corrections it applied, with each correction's source (measured, HAL-reported, or none)
 
 ### Results
 
 - [ ] **RES-01**: Each run reports valid hits out of N, median, jitter (p5–p95 spread), p95, max, a histogram and a per-hit timeline; outliers are kept
-- [ ] **RES-02**: User sees reported (macOS/driver) latency next to measured latency
+- [x] **RES-02**: User sees reported (macOS/driver) latency next to measured latency
 - [ ] **RES-03**: User sees a verdict band ("great / fine / noticeable") next to each result, citing the source of the thresholds
 - [ ] **RES-04**: User sees an intuitive latency breakdown of the chain (MIDI transport / DAW / output chain) that can be drilled into: each part names the recipe it came from and its uncertainty, and parts with no measurement are not shown (no invented numbers); the formula for each part is defined in its phase
 - [ ] **RES-05**: Corrected numbers show raw, correction and corrected values, and flag stale or missing calibration
@@ -28,7 +28,7 @@ Requirements for milestone 1. Each maps to roadmap phases.
 ### Calibration
 
 - [ ] **CAL-01**: User can measure round-trip latency by playing a click and recording it back (loopback or mic), in samples and ms, repeatable within 1–2 samples on loopback
-- [ ] **CAL-02**: Calibrations are stored per device pair, sample rate and buffer size, labelled round trip, and never applied as "mic delay"
+- [x] **CAL-02**: Calibrations are stored per device pair, sample rate and buffer size, labelled round trip, and never applied as "mic delay"
 - [ ] **CAL-03**: A host-clock self-test confirms the sample-count and host-clock paths agree within ~2 samples; until it passes, MIDI results are marked "unverified clock"
 - [ ] **CAL-04**: Recipes that span two audio devices check clock drift during the run and flag results when drift exceeds a stated threshold
 
@@ -116,14 +116,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ENG-07 | Phase 1 | Pending |
 | ENG-04 | Phase 1 | Pending |
 | ENG-05 | Phase 1 | Pending |
-| ENG-06 | Phase 1 | Pending |
+| ENG-06 | Phase 1 | Complete |
 | RES-01 | Phase 1 | Pending |
-| RES-02 | Phase 1 | Pending |
+| RES-02 | Phase 1 | Complete |
 | RES-03 | Phase 2 | Pending |
 | RES-04 | Phase 4 | Pending |
 | RES-05 | Phase 2 | Pending |
 | CAL-01 | Phase 1 | Pending |
-| CAL-02 | Phase 1 | Pending |
+| CAL-02 | Phase 1 | Complete |
 | CAL-03 | Phase 1 | Pending |
 | CAL-04 | Phase 3 | Pending |
 | MIDI-01 | Phase 2 | Pending |

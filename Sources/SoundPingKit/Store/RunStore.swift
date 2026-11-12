@@ -156,7 +156,7 @@ public struct RunStore: Sendable {
       guard let data = try? Data(contentsOf: file),
         let result = try? RunJSON.decoder().decode(RunResult.self, from: data)
       else { continue }
-      let stats = result.measured.path
+      let stats = result.measured.headlineStats ?? result.measured.path
       rows.append(
         RunListing(
           runId: folder.lastPathComponent, createdAt: result.createdAt, recipe: result.recipe.id,

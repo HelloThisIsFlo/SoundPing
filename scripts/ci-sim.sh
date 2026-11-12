@@ -30,12 +30,28 @@ assert abs(path["median"]["frames"] - 412.37) <= 0.1, path["median"]
 assert path["valid"] == 100 and path["n"] == 100, (path["valid"], path["n"])
 assert os.path.isabs(r["runPath"]) and os.path.isdir(r["runPath"]), r["runPath"]
 assert r["corrections"] == [], r["corrections"]
+# Measured next to reported (RES-02): the simulated duplex runs 2 x 128 + 28 frames of I/O offset
+# ahead, so the headline app round trip is the path plus that; a passing run stores a calibration.
+assert r["measured"]["domain"] == "sample" and r["measured"]["headline"] == "appRoundTrip", r["measured"]
+assert abs(r["measured"]["ioOffset"]["median"]["frames"] - 284) < 0.001, r["measured"]["ioOffset"]
+assert abs(r["measured"]["appRoundTrip"]["median"]["frames"] - (412.37 + 284)) <= 0.1, r["measured"]
+assert r["reported"]["source"] == "halReported", r["reported"]
+assert r["calibration"]["stored"] is True and r["calibration"]["label"] == "round trip", r["calibration"]
 ids = [s["id"] for s in r["segments"]]
 assert ids == ["audioOutput", "transmission", "audioInput"], ids
 print(r["runPath"])
 ' "$OUT")"
 
 cmp "$OUT" "$RUN_PATH/run.json"
+
+python3 -c '
+import json, sys
+file = json.load(open(sys.argv[1] + "/calibrations.json"))
+assert file["schemaVersion"] == 1 and len(file["calibrations"]) == 1, file
+record = file["calibrations"][0]
+assert record["kind"] == "roundTrip" and record["label"] == "round trip", record
+assert record["key"]["sampleRate"] == 48000 and record["key"]["bufferFrames"] == 128, record["key"]
+' "$STORE"
 
 # --ndjson (D-03): every stdout line is one JSON event, armed first, finished last, the 25
 # hit/rejected lines (5 warm-ups + 20 measured) in strictly increasing index order, and the
@@ -53,8 +69,12 @@ hits = [e for e in events if e["type"] in ("hit", "rejected")]
 assert len(hits) == 25, len(hits)
 indices = [e["index"] for e in hits]
 assert all(a < b for a, b in zip(indices, indices[1:])), indices
-assert len(events) == 27, len(events)
+# A same-device run proves its clock before it finishes: armed, 25 hits, selfTest, finished.
+assert events[-2]["type"] == "selfTest", events[-2]["type"]
+assert events[-2]["pass"] is True, events[-2]
+assert len(events) == 28, len(events)
 result = events[-1]["result"]
+assert result["selfTest"]["pass"] is True, result["selfTest"]
 saved = json.load(open(result["runPath"] + "/run.json"))
 assert result == saved, "finished line differs from run.json"
 ' "$NDJSON"
@@ -150,5 +170,23 @@ gate_check "$WORK/gate-nine.out" 9
 gate_run ten "5,6,7,8,9,10,11,12,13,14"
 [ "$GATE_RC" -eq 0 ] || { echo "ci-sim: gate (valid 10): expected exit 0, got $GATE_RC" >&2; cat "$WORK/gate-ten.err" >&2; exit 1; }
 gate_check "$WORK/gate-ten.out" 10
+
+# Host-clock self-test (CAL-03): the explicit gate passes on the simulated duplex device and writes
+# clock-selftest.json; a 3-frame input stamp bias fails it with exit 3 and the named gate error.
+"$BIN" selftest clock --simulate --json --store "$WORK/store-selftest" >"$WORK/selftest.out"
+python3 -c '
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report["type"] == "clockSelfTest" and report["pass"] is True, report
+assert report["schemaVersion"] == 1 and report["n"] == 100, report
+assert abs(report["medianDeltaFrames"]) < 0.1, report
+status = json.load(open(sys.argv[2] + "/clock-selftest.json"))
+assert status["schemaVersion"] == 1, status
+entry = status["entries"][0]
+assert entry["deviceUID"] == report["key"]["deviceUID"] == "soundping-sim-duplex", entry
+assert entry["sampleRate"] == 48000 and entry["bufferFrames"] == 128 and entry["pass"] is True, entry
+' "$WORK/selftest.out" "$WORK/store-selftest"
+expect_failure "clock self-test failure" 3 clockSelfTestFailed selftest clock --simulate --sim-stamp-bias 3 --store "$WORK/store-selftest-bias"
+expect_failure "self-test needs one device" 64 selfTestNeedsSameDevice selftest clock --simulate --output scarlett --input "MacBook Pro Microphone" --in-channel 1 --store "$WORK/store-selftest-two"
 
 echo "ci-sim: OK"

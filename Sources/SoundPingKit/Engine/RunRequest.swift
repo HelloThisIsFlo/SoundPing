@@ -33,6 +33,17 @@ public struct RunParameters: Codable, Sendable, Equatable {
     self.levelDbfs = levelDbfs
     self.minValidFraction = minValidFraction
   }
+
+  /// `ceil(minValidFraction * hits)`: how many measured hits must give a number for the run to
+  /// count (the valid-hit gate). The small offset keeps `0.3 * 10`, which floating point makes
+  /// 3.0000000000000004, from demanding a fourth hit.
+  public static func requiredValidHits(hits: Int, minValidFraction: Double) -> Int {
+    Int((minValidFraction * Double(hits) - 1e-9).rounded(.up))
+  }
+
+  public var requiredValidHits: Int {
+    Self.requiredValidHits(hits: hits, minValidFraction: minValidFraction)
+  }
 }
 
 public struct DeviceRef: Codable, Sendable, Equatable {

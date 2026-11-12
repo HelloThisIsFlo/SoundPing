@@ -69,10 +69,9 @@ enum ErrorReporting {
 
 /// The quality gate after a completed run (D-03 gate class).
 enum RunGate {
-  /// `ceil(minValidFraction * hits)`. The small offset keeps `0.3 * 10`, which floating point
-  /// makes 3.0000000000000004, from demanding a fourth hit.
+  /// `ceil(minValidFraction * hits)`, the same rule the engine stores calibrations by.
   static func requiredValid(hits: Int, minValidFraction: Double) -> Int {
-    Int((minValidFraction * Double(hits) - 1e-9).rounded(.up))
+    RunParameters.requiredValidHits(hits: hits, minValidFraction: minValidFraction)
   }
 
   /// nil when enough measured hits gave a number. The run is saved either way.

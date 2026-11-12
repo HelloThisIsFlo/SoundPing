@@ -21,12 +21,16 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
     try await inner.open(setup, templates: templates)
   }
   func start() async throws { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
   func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
   func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
   func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
   func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
     await inner.stamps(covering: range)
   }
+
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
 
   func waitUntilCaptured(throughInputFrame: Int64) async throws {
     waits += 1
@@ -103,7 +107,10 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
     let elapsed = clock.now - start
 
     #expect(result.hits.count == 105)
-    #expect(elapsed < .seconds(2))
+    // The point is that virtual time never sleeps: 105 hits spaced 450-750 ms would take a minute
+    // of wall clock. The bound is generous because `swift test` runs every suite in parallel and
+    // this run shares the CPU with them (a bare run takes about half a second in a debug build).
+    #expect(elapsed < .seconds(10))
   }
 
   @Test func aVanishedDeviceAbortsTheRun() async throws {
