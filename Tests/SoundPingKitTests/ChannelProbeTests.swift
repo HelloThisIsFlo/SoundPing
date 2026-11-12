@@ -165,35 +165,31 @@ private actor GlitchingProbeBackend: AudioBackend {
     #expect(probed.result == nil)
   }
 
-  @Test func knownHeadphonesKeepTheirCeilingWhileProbingChannels() throws {
-    var headphones = SimulatedCatalog.macSpeakers
-    headphones.output?.dataSource = "hdpn"
+  @Test func theProbePlaysUnderTheRunCeilingTheBuiltInSpeakersIncluded() async throws {
+    // One rule for runs and probes: the built-in speakers get -12 dBFS here too, an interface -18.
     let mic = SimulatedCatalog.macMicrophone
-    let onHeadphones = ResolvedSetup(
-      output: headphones.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1,
-      inChannelName: "Loop 1", autoInChannel: false)
-
-    let detected = try LevelRamp.probeLoudness(
-      setup: onHeadphones, output: headphones, options: PreflightOptions())
-    #expect(detected.ceilingDbfs == -30, "a loop-named channel must not lift the headphone ceiling")
-    let interface = try LevelRamp.probeLoudness(
-      setup: Self.setup, output: Self.scarlett, options: PreflightOptions())
-    #expect(interface.kind == .unknown)
-    #expect(interface.ceilingDbfs == -18)
-    // The built-in speakers get -12 in a run, but the probe stays at -18, and says why.
     let speakers = SimulatedCatalog.macSpeakers
-    let onSpeakers = ResolvedSetup(
-      output: speakers.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1, autoInChannel: false)
-    let probeOnSpeakers = try LevelRamp.probeLoudness(
-      setup: onSpeakers, output: speakers, options: PreflightOptions())
-    #expect(probeOnSpeakers.ceilingDbfs == -18)
-    #expect(probeOnSpeakers.ceilingOrigin.contains("channel probe's limit"))
-    // --listener names the listener but never lifts the headphone ceiling (WR-13).
-    for named in ListenerKind.allCases {
-      let flagged = try LevelRamp.probeLoudness(
-        setup: onHeadphones, output: headphones, options: PreflightOptions(listener: named))
-      #expect(flagged.kind == named)
-      #expect(flagged.ceilingDbfs == -30, "--listener \(named)")
+    #expect(speakers.output?.dataSource == "ispk")
+    for (output, expected) in [(speakers, -12.0), (Self.scarlett, -18.0)] {
+      var setup = Self.setup
+      setup.output = output.ref
+      var thrown: SoundPingError?
+      do {
+        _ = try await ChannelProbe().run(
+          backend: SimulatedBackend(
+            scenario: Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 7, seed: 3)),
+          setup: setup, channels: Array((Self.scarlett.input?.channels ?? []).prefix(2)))
+      } catch {
+        thrown = error as? SoundPingError
+      }
+      let error = try #require(thrown, "\(output.name)")
+      #expect(error.code == "nothingHeardAtCeiling")
+      #expect(error.context["ceilingDbfs"] == String(expected), "\(output.name)")
+      #expect(error.context["ceilingSource"] == "output", "\(output.name)")
+      let run = try LevelRamp.runLoudness(
+        setup: ResolvedSetup(output: output.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1),
+        output: output, input: mic, options: PreflightOptions())
+      #expect(run.ceilingDbfs == expected, "the same ceiling as a run: \(output.name)")
     }
   }
 

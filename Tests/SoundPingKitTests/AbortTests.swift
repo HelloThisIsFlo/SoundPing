@@ -427,8 +427,8 @@ private actor RouteBetweenOpensBackend: AudioBackend {
   }
 
   @Test func headphonesPluggedInBetweenTwoProbedChannelsEndTheProbe() async throws {
-    // The built-in speakers get the probe's -18 dBFS; the next channel's open sees the headphone
-    // source. It must not keep probing at -18 into the headphones (WR-15).
+    // The built-in speakers get -12 dBFS; the next channel's open sees the headphone source. It
+    // must not keep probing at -12 into the headphones (WR-15).
     let speakers = SimulatedCatalog.macSpeakers
     #expect(speakers.output?.dataSource == "ispk")
     let scarlett = SimulatedCatalog.scarlett

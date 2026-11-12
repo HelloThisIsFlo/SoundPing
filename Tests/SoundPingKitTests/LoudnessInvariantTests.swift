@@ -62,7 +62,7 @@ private final class LoudestPlayedBackend: AudioBackend {
 ///   nothing), never raise it.
 /// - `--max-level` replaces the ceiling and is the only way to a louder probe. `--level` stays
 ///   clamped to the ceiling.
-/// - The `--in-channel auto` probe follows the same rule but never goes above -18.
+/// - The `--in-channel auto` probe follows exactly the same rule (the built-in speakers -12 too).
 ///
 /// It walks every output kind × input kind × `--listener` × `--max-level` on the run and the probe
 /// path, then checks what the simulator was really asked to play.
@@ -96,9 +96,6 @@ private final class LoudestPlayedBackend: AudioBackend {
         return -18
       }
     }
-
-    /// The `--in-channel auto` probe: the same rule, never above -18.
-    var probeRuleCeiling: Double { Swift.min(ruleCeiling, -18) }
 
     var isKnownHeadphones: Bool { ruleCeiling == -30 }
 
@@ -327,8 +324,11 @@ private final class LoudestPlayedBackend: AudioBackend {
 
             let run = try LevelRamp.runLoudness(
               setup: setup, output: outputInfo, input: inputInfo, options: options)
-            let probe = try LevelRamp.probeLoudness(
-              setup: setup, output: outputInfo, options: options)
+            // The probe works its loudness out before the channel is known.
+            var unprobed = setup
+            unprobed.inChannelName = nil
+            let probe = try LevelRamp.runLoudness(
+              setup: unprobed, output: outputInfo, input: inputInfo, options: options)
 
             #expect(
               run.ceilingDbfs
@@ -336,7 +336,7 @@ private final class LoudestPlayedBackend: AudioBackend {
               "run: \(label)")
             #expect(
               probe.ceilingDbfs
-                == Self.expected(output.probeRuleCeiling, listener: listener, maxLevel: maxLevel),
+                == Self.expected(output.ruleCeiling, listener: listener, maxLevel: maxLevel),
               "probe: \(label)")
             // The flag names the reported listener (and so the band), whatever it does to the ceiling.
             if let listener {
@@ -347,9 +347,9 @@ private final class LoudestPlayedBackend: AudioBackend {
 
             if maxLevel == nil {
               #expect(run.ceilingDbfs <= output.ruleCeiling, "never raised: run: \(label)")
-              #expect(probe.ceilingDbfs <= output.probeRuleCeiling, "never raised: probe: \(label)")
+              #expect(probe.ceilingDbfs <= output.ruleCeiling, "never raised: probe: \(label)")
               #expect(run.ceilingDbfs <= Self.loudestRuleCeiling, "no loop exception: \(label)")
-              #expect(probe.ceilingDbfs <= -18, "probe: \(label)")
+              #expect(probe.ceilingDbfs <= Self.loudestRuleCeiling, "probe: \(label)")
               if output.isKnownHeadphones {
                 #expect(run.ceilingDbfs <= Self.headphoneCeiling, "run: \(label)")
                 #expect(probe.ceilingDbfs <= Self.headphoneCeiling, "probe: \(label)")
@@ -519,13 +519,14 @@ private final class LoudestPlayedBackend: AudioBackend {
         }
 
         let ceiling = Self.expected(
-          output.kind.probeRuleCeiling, listener: listener, maxLevel: maxLevel)
+          output.kind.ruleCeiling, listener: listener, maxLevel: maxLevel)
         #expect(thrown?.code == "nothingHeardAtCeiling", "\(label)")
         #expect(thrown?.context["ceilingDbfs"] == String(ceiling), "\(label)")
         let loudest = try #require(backend.loudestDbfs, "\(label)")
         #expect(loudest <= ceiling + 1e-3, "played \(loudest) dBFS, ceiling \(ceiling): \(label)")
+        #expect(loudest >= ceiling - 1e-3, "the deaf probe reaches the ceiling: \(label)")
         if maxLevel == nil {
-          #expect(loudest <= -18 + 1e-3, "\(label)")
+          #expect(loudest <= Self.loudestRuleCeiling + 1e-3, "\(label)")
           if output.kind.isKnownHeadphones {
             #expect(loudest <= Self.headphoneCeiling + 1e-3, "\(label)")
           }

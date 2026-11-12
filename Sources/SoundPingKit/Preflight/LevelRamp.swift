@@ -57,8 +57,8 @@ public struct LevelRamp: Sendable {
   /// far below -18. Guessing which setups are loops, to allow them more, bought nothing and caused
   /// every hearing-safety regression so far (CR-02 to CR-05).
   ///
-  /// The `--in-channel auto` probe uses the same output rule, but never goes above the -18 dBFS of
-  /// "other", so it plays the built-in speakers at -18 too (see `probeLoudness`).
+  /// The `--in-channel auto` probe plays under exactly this rule too, through `runLoudness`, so
+  /// the built-in speakers get -12 there as in a run.
   ///
   /// **2. `--listener` describes the setup.** It picks the listener the run reports and, without
   /// `--template`, the chirp band. It can lower the ceiling to that listener's (headphones -30,
@@ -78,10 +78,8 @@ public struct LevelRamp: Sendable {
   /// headset from an interface, and an interface headphone jack looks like a line out. A wrong
   /// guess costs a speaker user one flag (`--max-level`); the opposite wrong guess would put -12 or
   /// -18 dBFS clicks next to someone's ears.
-  ///
-  /// `capDbfs` is the channel probe's limit (`probeLoudness`); a run has none.
   public static func loudness(
-    output: OutputClass, detected: ListenerKind, options: PreflightOptions, capDbfs: Double? = nil
+    output: OutputClass, detected: ListenerKind, options: PreflightOptions
   ) throws -> Loudness {
     let kind = options.listener ?? detected
     if let maxLevel = options.maxLevelDbfs {
@@ -89,19 +87,13 @@ public struct LevelRamp: Sendable {
         kind: kind, detected: detected, output: output,
         ceilingDbfs: try validatedMaxLevel(maxLevel), source: .maxLevel)
     }
-    var fromOutput = ceilingDbfs(for: output)
-    var capped = false
-    if let capDbfs, capDbfs < fromOutput {
-      fromOutput = capDbfs
-      capped = true
-    }
+    let fromOutput = ceilingDbfs(for: output)
     if let named = options.listener.flatMap(listenerCeilingDbfs(for:)), named < fromOutput {
       return Loudness(
         kind: kind, detected: detected, output: output, ceilingDbfs: named, source: .listenerFlag)
     }
     return Loudness(
-      kind: kind, detected: detected, output: output, ceilingDbfs: fromOutput, source: .output,
-      probeCapped: capped)
+      kind: kind, detected: detected, output: output, ceilingDbfs: fromOutput, source: .output)
   }
 
   /// What the ceiling is chosen from: the output device, and nothing else (see `loudness`).
@@ -208,26 +200,21 @@ public struct LevelRamp: Sendable {
     public var output: OutputClass
     public var ceilingDbfs: Double
     public var source: CeilingSource
-    /// The channel probe's limit held the ceiling below the output's own.
-    public var probeCapped: Bool
 
     public init(
       kind: ListenerKind, detected: ListenerKind, output: OutputClass, ceilingDbfs: Double,
-      source: CeilingSource, probeCapped: Bool = false
+      source: CeilingSource
     ) {
       self.kind = kind
       self.detected = detected
       self.output = output
       self.ceilingDbfs = ceilingDbfs
       self.source = source
-      self.probeCapped = probeCapped
     }
 
     /// What set the ceiling, in words, for messages.
     public var ceilingOrigin: String {
       switch source {
-      case .output where probeCapped:
-        return "the channel probe's limit, below the ceiling for \(output.phrase)"
       case .output: return "for \(output.phrase), chosen from the output alone"
       case .listenerFlag: return "set by --listener \(kind.rawValue)"
       case .maxLevel: return "set by --max-level"
@@ -247,25 +234,15 @@ public struct LevelRamp: Sendable {
     }
   }
 
-  /// The loudness of a run: the output's ceiling with the user's options applied, and the
-  /// detected listener for the report and the chirp band.
+  /// The loudness of a run, and of an `--in-channel auto` probe (which passes its setup before the
+  /// channel is known): the output's ceiling with the user's options applied, and the detected
+  /// listener for the report and the chirp band.
   public static func runLoudness(
     setup: ResolvedSetup, output: DeviceInfo?, input: DeviceInfo?, options: PreflightOptions
   ) throws -> Loudness {
     try loudness(
       output: outputClass(setup: setup, output: output),
       detected: classify(setup: setup, output: output, input: input), options: options)
-  }
-
-  /// The loudness of an `--in-channel auto` probe: the output rule, but never above the -18 dBFS
-  /// of "other", so headphones get -30 and everything else, the built-in speakers included, -18.
-  public static func probeLoudness(
-    setup: ResolvedSetup, output: DeviceInfo?, options: PreflightOptions
-  ) throws -> Loudness {
-    let outputClass = outputClass(setup: setup, output: output)
-    return try loudness(
-      output: outputClass, detected: outputClass == .headphones ? .headphones : .unknown,
-      options: options, capDbfs: ceilingDbfs(for: .other))
   }
 
   /// `--max-level`, refused unless it is a finite dBFS value of 0 or below.

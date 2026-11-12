@@ -249,20 +249,6 @@ private actor GlitchedWindowsBackend: AudioBackend {
     #expect(!LevelRamp.outputIsHeadphones(setup: setup, output: usb))
   }
 
-  @Test func theChannelProbeAlsoKeepsTheHeadphoneCeilingOnABluetoothOutput() throws {
-    let earbuds = Self.bluetooth(from: Self.macSpeakers)
-    let setup = Self.setup(output: earbuds, input: Self.macMicrophone)
-    let detected = try LevelRamp.probeLoudness(
-      setup: setup, output: earbuds, options: PreflightOptions())
-    #expect(detected.kind == .headphones)
-    #expect(detected.ceilingDbfs == -30)
-    // --listener names the listener and the band, but never lifts the headphone ceiling (WR-13).
-    let named = try LevelRamp.probeLoudness(
-      setup: setup, output: earbuds, options: PreflightOptions(listener: .speaker))
-    #expect(named.kind == .speaker)
-    #expect(named.ceilingDbfs == -30)
-  }
-
   @Test func eachOutputHasItsOwnCeilingAndALoopbackListenerLowersNothing() {
     #expect(LevelRamp.ceilingDbfs(for: LevelRamp.OutputClass.headphones) == -30)
     #expect(LevelRamp.ceilingDbfs(for: LevelRamp.OutputClass.speakers) == -12)

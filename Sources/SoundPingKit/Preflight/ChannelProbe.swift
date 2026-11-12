@@ -84,9 +84,9 @@ public struct ChannelProbe: Sendable {
   }
 
   /// `setup` names the devices; `inChannel` is ignored and replaced by each of `channels` in turn.
-  /// The probe plays under `LevelRamp.probeLoudness`: the output alone sets the ceiling, -30 dBFS
-  /// for an output treated as headphones and -18 dBFS for anything else (the built-in speakers
-  /// included), `--listener` can only lower that, and `--max-level` replaces it (T-01-28).
+  /// The probe plays under the run's loudness rule (`LevelRamp.runLoudness`, written down at
+  /// `LevelRamp.loudness`): the output alone sets the ceiling, `--listener` can only lower it, and
+  /// `--max-level` replaces it (T-01-28).
   public func run(
     backend: any AudioBackend, setup: ResolvedSetup, channels: [ChannelInfo],
     options: PreflightOptions = PreflightOptions(), templateId: String = "chirp-loopback"
@@ -99,6 +99,10 @@ public struct ChannelProbe: Sendable {
     // Refuses a bad `--max-level` before anything plays; the loudness is decided once the output
     // device is known, before the first sound.
     if let maxLevel = options.maxLevelDbfs { _ = try LevelRamp.validatedMaxLevel(maxLevel) }
+    // The loudness is the run's, worked out before the channel is known, so it never depends on
+    // which channel is being probed.
+    var unprobed = setup
+    unprobed.inChannelName = nil
     // The loudness decided at the first open, and the output data source it was decided with.
     var decided: (loudness: LevelRamp.Loudness, dataSource: String?)?
     let nominal = try StimulusLibrary.template(id: templateId, sampleRate: 48_000)
@@ -122,8 +126,8 @@ public struct ChannelProbe: Sendable {
       // see the route that loudness was decided with (WR-15): the backend's route watching starts
       // over at every open, so a switch between two channels (speakers to headphones) would
       // otherwise go unseen while the first channel's ceiling stays in force.
-      let loudness = try LevelRamp.probeLoudness(
-        setup: channelSetup, output: info.outputDevice, options: options)
+      let loudness = try LevelRamp.runLoudness(
+        setup: unprobed, output: info.outputDevice, input: info.inputDevice, options: options)
       let dataSource = info.outputDevice?.output?.dataSource
       if let decided {
         if dataSource != decided.dataSource || loudness != decided.loudness {
