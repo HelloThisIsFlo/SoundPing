@@ -516,6 +516,7 @@ public actor SimulatedBackend: AudioBackend {
     var log = StampLog()
     log.input.reserveCapacity(callbacks)
     log.output.reserveCapacity(callbacks)
+    if !twoDevices { log.ioOffsetFrames.reserveCapacity(callbacks) }
     for index in 0..<callbacks {
       let stamp = callbackStamp(index: Int64(index))
       log.input.append(
@@ -526,6 +527,8 @@ public actor SimulatedBackend: AudioBackend {
         TimelinePoint(
           sampleTime: stamp.outputSampleTime, hostTime: stamp.outputHostTime,
           rateScalar: stamp.outputRateScalar, frames: stamp.frames))
+      // One callback of one device: its output label minus its input label.
+      if !twoDevices { log.ioOffsetFrames.append(stamp.outputSampleTime - stamp.inputSampleTime) }
     }
     return log
   }

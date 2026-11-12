@@ -150,7 +150,7 @@ public final class HALBackend: AudioBackend {
     let rt = RTState(
       RTState.Configuration(
         sampleRate: rate, inputSlot: inSlot, outputSlots: outSlots,
-        templates: regenerated.map(\.samples)))
+        templates: regenerated.map(\.samples), sharedDevice: outID == inID))
 
     // Device handles are tracked from the first IOProc on, so a failure part way through is cleaned
     // up by `stop()`, which the coordinator calls on every exit path.
@@ -322,8 +322,10 @@ public final class HALBackend: AudioBackend {
     // functions are only called for the directions the device really has.
     let status = AudioDeviceCreateIOProcIDWithBlock(&procID, id, nil) {
       _, inputData, inputTime, outputData, outputTime in
-      if captures, hasInputs { ioCycleInput(rt, inputData, inputTime) }
-      if hasOutputs { ioCycleOutput(rt, outputData, outputTime, isOutputDevice: plays) }
+      ioCycle(
+        rt, captures: captures, plays: plays, hasInputs: hasInputs, hasOutputs: hasOutputs,
+        inputData: inputData, inputTime: inputTime, outputData: outputData,
+        outputTime: outputTime)
     }
     guard status == noErr, procID != nil else {
       throw SoundPingError.preflight(

@@ -337,6 +337,28 @@ import Testing
     #expect(result.pass)
   }
 
+  @Test func onlyHitsInsideTheLoggedCallbacksAreJudged() {
+    // A long run whose stamp ring wrapped: only the second half of the callbacks is still logged.
+    // Judging the early hits would extrapolate across the hole; they are skipped, not failed.
+    let clock = Self.appleSilicon
+    let all = Self.points(clock: clock, ppm: 0)
+    let kept = Array(all[200...])
+    let log = StampLog(input: kept, output: kept)
+    let hits = (0..<10).map {
+      HitRecord(
+        index: $0, phase: .measure, outputFrame: Int64(5_000 + $0 * 5_000), latencyFrames: 400)
+    }
+    // Kept callbacks cover samples 25_600 and up: hits 5 through 9 (output 30_000...) are inside.
+    let result = ClockSelfTest.evaluate(
+      hits: hits, stampLog: log, sampleRate: 48_000, hostClock: clock)
+    #expect(result.n == 5)
+    #expect(result.pass)
+    #expect(abs(result.medianDeltaFrames) < 0.1)
+
+    let timeline = DeviceTimeline(points: kept, sampleRate: 48_000, clock: clock)!
+    #expect(timeline.coveredSamples == 25_600...(25_600 + 199 * 128 + 128))
+  }
+
   // MARK: clock-selftest.json
 
   private static func entry(

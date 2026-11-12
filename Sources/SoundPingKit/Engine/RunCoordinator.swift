@@ -364,12 +364,14 @@ private struct Session: Sendable {
     var figures = Measured(headline: .path, domain: sameDevice ? .sample : .host, path: stats)
     var selfTest: ClockSelfTestResult?
     var hostTimebase: HostTimebase?
+    var selfTestWarning: String?
     if !log.isEmpty { hostTimebase = info.hostClock.timebase }
 
     if sameDevice, !log.isEmpty {
       // The distance the app adds on top of the path: how far its output labels run ahead of its
-      // input labels in the same callback. Read per callback, never assumed (RES-02).
-      let ioOffsets = zip(log.input, log.output).map { $1.sampleTime - $0.sampleTime }
+      // input labels in the same callback. Read per callback, never assumed (RES-02). It comes from
+      // one ring entry per duplex callback, never from pairing the two lists by index (WR-03).
+      let ioOffsets = log.ioOffsetFrames
       let ioStats = Stats.summarize(
         latencies: ioOffsets, n: ioOffsets.count, sampleRate: info.sampleRate)
       if let medianIo = ioStats.median?.frames {
@@ -393,10 +395,19 @@ private struct Session: Sendable {
         hits: records, stampLog: log, sampleRate: info.sampleRate, hostClock: info.hostClock,
         halInputHostTimes: halTimes)
       selfTest = evaluated
+      let valid = measured.filter { $0.rejection == nil && $0.latencyFrames != nil }.count
+      if evaluated.n < valid {
+        selfTestWarning =
+          "the clock self-test judged \(evaluated.n) of \(valid) valid hits; the rest fell outside the callbacks the stamp log still holds"
+      }
       continuation.yield(.selfTest(evaluated))
     }
 
     // What macOS says about these devices, shown beside the measurement and never applied to it.
+    // A warning from the self-test goes into the saved run, so run.json says what was judged.
+    var preflight = preflight
+    if let selfTestWarning { preflight.warnings.append(selfTestWarning) }
+
     var reported: ReportedLatency?
     if let outputDevice = info.outputDevice, let inputDevice = info.inputDevice {
       reported = ReportedLatency.compute(
