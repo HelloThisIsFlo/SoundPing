@@ -560,8 +560,8 @@ flowchart LR
 - **How to avoid:** a separate probe phase; or start loopback at −30 dBFS. See Open Question 1.
 
 ### P6: Hit spacing vs maximum latency
-- **What goes wrong:** with 400–700 ms spacing, a 350 ms window is the limit. A Bluetooth output (~200–300 ms) plus the chirp and its tail can spill into the next hit.
-- **How to avoid:** the recipe declares `maxLatency` (default 350 ms). Spacing min ≥ maxLatency + chirp + 50 ms is enforced at arm time. Big reported latencies widen both, and say so.
+- **What goes wrong:** with the default 450–750 ms spacing, a 350 ms window is the limit. A Bluetooth output (~200–300 ms) plus the chirp and its tail can spill into the next hit.
+- **How to avoid:** the recipe declares `maxLatency` (default 350 ms). Spacing min ≥ maxLatency + chirp + 50 ms is enforced at arm time. The 450 ms default minimum was chosen so the defaults pass this guard (350 + 30 ms chirp + 50 = 430 ≤ 450; templates up to 50 ms fit). Big reported latencies widen both, and say so.
 
 ### P7: Negative MIDI unique IDs on the command line
 - **What goes wrong:** `kMIDIPropertyUniqueID` values like `-823739469` [VERIFIED: local spike] look like options to the argument parser.
@@ -710,7 +710,7 @@ func percentile(_ sorted: [Double], _ p: Double) -> Double {   // linear interpo
 | A5 | Rogue Amoeba Loopback / Scarlett "Loop 1/2" behave as zero-cable loopbacks usable for path ≈ 0 checks | P3, bench | Bench plan adjusts; Loop channels may need Focusrite Control routing |
 | A6 | `--simulate` never needs CoreAudio, so GitHub runners without audio devices are fine | Pattern 7 | CI flake if any device call leaks into the sim path |
 | A7 | Per-process buffer also holds while devices run (tested with device idle) | P1 | `--buffer` might affect other apps; verify on bench with Ableton open |
-| A8 | Spacing 400–700 ms and window 350 ms defaults | P6 | Overlapping windows on slow outputs |
+| A8 | Spacing 450–750 ms and window 350 ms defaults (retuning must keep spacing min ≥ window + longest template + 50 ms) | P6 | Overlapping windows on slow outputs |
 
 ## ❓ Open Questions (RESOLVED)
 
@@ -765,7 +765,7 @@ func percentile(_ sorted: [Double], _ p: Double) -> Double {   // linear interpo
 | ENG-02 | Events stream live; ndjson one object per line; JSON = run.json | sim integration | `swift test --filter RunStreamTests` + `scripts/ci-sim.sh` | ❌ |
 | ENG-03 | Zeros + denied → `micPermissionDenied` (exit 65, app named); zeros + authorized → `inputDigitalSilence`; clipping; nothing at ceiling | sim (fault scenarios + fake PermissionProbe) | `swift test --filter PreflightTests` | ❌ |
 | ENG-03 | Real denial names Ghostty | manual | `tccutil reset Microphone com.mitchellh.ghostty` (Flo's choice), run, re-grant | manual-only |
-| ENG-04 | Spacing within range, non-constant, seeded reproducible; warm-ups excluded from stats | unit | `swift test --filter SchedulerTests` | ❌ |
+| ENG-04 | Spacing within range, non-constant, seeded reproducible; defaults pass the spacing guard; warm-ups excluded from stats | unit | `swift test --filter SchedulerTests` | ❌ |
 | ENG-05 | Injected latency (e.g. 412.37 fr) recovered within 0.1 fr; jitter p5–p95 within 10 % of injected; runs < 2 s | sim | `swift test --filter SimulationRecoveryTests` | ❌ |
 | ENG-06 | Result lists segments + corrections (`source: none`) | unit (Codable) | `swift test --filter ResultSchemaTests` | ❌ |
 | ENG-07 | `sampleRateChange@hit30` → abort, exit 75; xrun → hits rejected `discontinuity` | sim | `swift test --filter AbortTests` | ❌ |
