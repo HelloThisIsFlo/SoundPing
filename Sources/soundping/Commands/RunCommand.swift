@@ -93,13 +93,17 @@ struct RunCommand: AsyncParsableCommand {
     if let name = options.saveSetup {
       try options.persistSetup(resolved, as: name)
       result.saved = true
-    } else if interactive, let name = options.setup {
+    } else if interactive, let name = options.setup,
+      try options.setupBindsSameDevices(name, as: resolved)
+    {
+      // Only a setup that binds the probed devices is offered the channel; with other devices the
+      // index would point at the wrong channel next time (WR-06).
       Output.writeLine("")
       FileHandle.standardError.write(
         Data("Save in-channel \(chosen.index) to setup \(name)? [y/N] ".utf8))
       let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
       if answer == "y" || answer == "yes" {
-        try options.updateSetupChannel(chosen.index, in: name)
+        try options.updateSetupChannel(chosen.index, in: name, probedOn: resolved)
         result.saved = true
       }
     }

@@ -180,13 +180,33 @@ struct RunOptions: ParsableArguments {
     try Setups.save(file, to: paths.setups)
   }
 
-  /// Changes only the input channel of a setup that already exists.
-  func updateSetupChannel(_ channel: Int, in name: String) throws {
+  /// Whether the saved setup `name` names the same output and input devices as `resolved`. A
+  /// channel index only means something on the device it was found on, so it is only written into
+  /// a setup that binds that device (WR-06).
+  func setupBindsSameDevices(_ name: String, as resolved: ResolvedSetup) throws -> Bool {
+    let file = try Setups.load(from: try storePaths().setups)
+    guard let binding = file.setups[name] else { return false }
+    return binding.output.uid == resolved.output.uid && binding.input.uid == resolved.input.uid
+  }
+
+  /// Changes only the input channel of a setup that already exists and binds the same devices as
+  /// `resolved`, the setup the channel was probed on.
+  func updateSetupChannel(_ channel: Int, in name: String, probedOn resolved: ResolvedSetup) throws
+  {
     let paths = try storePaths()
     var file = try Setups.load(from: paths.setups)
     guard var binding = file.setups[name] else {
       throw SoundPingError.usage(
         "unknownSetup", "no saved setup named '\(name)'", context: ["setup": name])
+    }
+    guard binding.output.uid == resolved.output.uid, binding.input.uid == resolved.input.uid else {
+      throw SoundPingError.usage(
+        "setupDeviceMismatch",
+        "setup '\(name)' is bound to other devices than the ones probed, so channel \(channel) is not saved into it",
+        context: [
+          "setup": name,
+          "fix": "rerun with --in-channel auto --save-setup NAME to save the probed devices under a name",
+        ])
     }
     binding.inChannel = channel
     file.setups[name] = binding
