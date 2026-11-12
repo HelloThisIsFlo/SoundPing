@@ -26,6 +26,20 @@ struct RunOptions: ParsableArguments {
   )
   var store: String?
 
+  @Option(help: "A label for this run, stored verbatim and used in the run folder name.")
+  var label: String?
+
+  @Option(
+    name: .customLong("tag"),
+    help: "A tag for this run. Repeat the flag for several; duplicates are dropped.")
+  var tags: [String] = []
+
+  /// Tags without duplicates, first-seen order kept.
+  var uniqueTags: [String] {
+    var seen = Set<String>()
+    return tags.filter { seen.insert($0).inserted }
+  }
+
   /// Draws the random seed once, after parsing, so the request and the simulator share it.
   mutating func pinSeed() {
     if seed == nil { seed = UInt64.random(in: 0..<(1 << 53)) }
@@ -69,6 +83,7 @@ struct RunOptions: ParsableArguments {
       }
       parameters.templateId = template
     }
-    return RunRequest(recipe: recipe, parameters: parameters, setup: setup)
+    return RunRequest(
+      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags)
   }
 }
