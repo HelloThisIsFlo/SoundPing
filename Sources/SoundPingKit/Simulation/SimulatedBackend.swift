@@ -35,9 +35,17 @@ public struct Scenario: Codable, Sendable, Equatable {
   /// Gaussian sigma in frames, drawn once per hit from the seed.
   public var jitterFrames: Double
   public var noiseRms: Double
+  /// Gain of the path in dB. Every rendered sample is clamped to [-1, 1] like a real converter,
+  /// so a large value clips.
   public var pathGainDb: Double
   public var sampleRate: Double
   public var bufferFrames: Int
+  /// Global hit indices (the numbering of `HitRecord.index`, warm-ups first) that never arrive:
+  /// the stimulus is not rendered, the capture holds only noise.
+  public var missedHits: [Int]
+  /// Global hit indices during which the input drops `SimulatedBackend.xrunFrames` frames: the
+  /// capture holds zeros there and the callback stamps jump, as after a real HAL glitch.
+  public var xrunHits: [Int]
   public var seed: UInt64
 
   public init(
@@ -47,6 +55,8 @@ public struct Scenario: Codable, Sendable, Equatable {
     pathGainDb: Double = 0,
     sampleRate: Double = 48_000,
     bufferFrames: Int = 128,
+    missedHits: [Int] = [],
+    xrunHits: [Int] = [],
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -55,7 +65,23 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.pathGainDb = pathGainDb
     self.sampleRate = sampleRate
     self.bufferFrames = bufferFrames
+    self.missedHits = missedHits
+    self.xrunHits = xrunHits
     self.seed = seed
+  }
+
+  // Hand-written so a run.json saved before the fault lists existed still decodes.
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    latencyFrames = try c.decode(Double.self, forKey: .latencyFrames)
+    jitterFrames = try c.decode(Double.self, forKey: .jitterFrames)
+    noiseRms = try c.decode(Double.self, forKey: .noiseRms)
+    pathGainDb = try c.decode(Double.self, forKey: .pathGainDb)
+    sampleRate = try c.decode(Double.self, forKey: .sampleRate)
+    bufferFrames = try c.decode(Int.self, forKey: .bufferFrames)
+    missedHits = try c.decodeIfPresent([Int].self, forKey: .missedHits) ?? []
+    xrunHits = try c.decodeIfPresent([Int].self, forKey: .xrunHits) ?? []
+    seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
 
@@ -79,8 +105,13 @@ public actor SimulatedBackend: AudioBackend {
   private let eventContinuation: AsyncStream<DeviceEvent>.Continuation
   private var templates: [String: StimulusTemplate] = [:]
   private var hits: [ScheduledHit] = []
+  /// Input frame where each simulated xrun drops `xrunFrames` frames, ascending.
+  private var xrunGaps: [Int64] = []
   private var framesProcessed: Int64 = 0
   private var started = false
+
+  /// How many input frames one simulated xrun loses.
+  public static let xrunFrames: Int64 = 64
 
   // mach_timebase_info on Apple Silicon: nanoseconds = ticks * 125 / 3.
   private static let timebaseNumer = 125.0
@@ -116,11 +147,40 @@ public actor SimulatedBackend: AudioBackend {
   public func schedule(_ newHits: [ScheduledHit]) async throws {
     for hit in newHits where templates[hit.templateId] == nil {
       throw SoundPingError.internalFailure(
-        "unknownTemplate", "hit \(hit.index) uses template '\(hit.templateId)' that was never opened"
+        "unknownTemplate",
+        "hit \(hit.index) uses template '\(hit.templateId)' that was never opened"
       )
     }
     hits.append(contentsOf: newHits)
     hits.sort { $0.outputFrame < $1.outputFrame }
+    try validateFaultIndices()
+    xrunGaps = faultGaps()
+  }
+
+  /// A fault index that names no scheduled hit is a typo, not a no-op (T-01-15).
+  private func validateFaultIndices() throws {
+    let highest = hits.map(\.index).max() ?? -1
+    for (name, indices) in [("sim-miss", scenario.missedHits), ("sim-xrun", scenario.xrunHits)] {
+      if let bad = indices.first(where: { $0 < 0 || $0 > highest }) {
+        throw SoundPingError.usage(
+          "invalidParameters",
+          "--\(name) names hit \(bad), but this run fires hits 0 through \(highest) (warm-ups first)",
+          context: ["parameter": name, "value": String(bad), "highestHit": String(highest)])
+      }
+    }
+  }
+
+  /// Each xrun lands on the first buffer boundary after the middle of its hit's arrival, so the
+  /// stimulus is cut in two the way a real glitch cuts it.
+  private func faultGaps() -> [Int64] {
+    let buffer = Int64(scenario.bufferFrames)
+    let xrun = Set(scenario.xrunHits)
+    return hits.compactMap { hit -> Int64? in
+      guard xrun.contains(hit.index), let template = templates[hit.templateId] else { return nil }
+      let start = Double(hit.outputFrame) + scenario.latencyFrames + jitter(forHit: hit.index)
+      let middle = start + Double(template.samples.count) / 2
+      return (Int64(middle.rounded(.up)) + buffer - 1) / buffer * buffer
+    }.sorted()
   }
 
   public func waitUntilCaptured(throughInputFrame: Int64) async throws {
@@ -153,8 +213,9 @@ public actor SimulatedBackend: AudioBackend {
     }
 
     let pathGain = pow(10, scenario.pathGainDb / 20)
+    let missed = Set(scenario.missedHits)
     for hit in hits {
-      guard let template = templates[hit.templateId] else { continue }
+      guard !missed.contains(hit.index), let template = templates[hit.templateId] else { continue }
       let start = Double(hit.outputFrame) + scenario.latencyFrames + jitter(forHit: hit.index)
       let end = start + template.durationMs / 1000 * scenario.sampleRate
       guard end > Double(range.lowerBound), start < Double(range.upperBound) else { continue }
@@ -164,9 +225,20 @@ public actor SimulatedBackend: AudioBackend {
       let scale = Double(hit.gain) * pathGain
       for frame in first..<last {
         let seconds = (Double(frame) - start) / scenario.sampleRate
-        out[Int(frame - range.lowerBound)] += Float(scale * Double(template.value(atSeconds: seconds)))
+        out[Int(frame - range.lowerBound)] += Float(
+          scale * Double(template.value(atSeconds: seconds)))
       }
     }
+
+    for gap in xrunGaps {
+      let first = Swift.max(range.lowerBound, gap)
+      let last = Swift.min(range.upperBound, gap + Self.xrunFrames)
+      guard first < last else { continue }
+      for frame in first..<last { out[Int(frame - range.lowerBound)] = 0 }
+    }
+
+    // A converter cannot go past full scale.
+    for offset in 0..<count { out[offset] = Swift.max(-1, Swift.min(1, out[offset])) }
     return out
   }
 
@@ -180,8 +252,10 @@ public actor SimulatedBackend: AudioBackend {
       let frame = index * buffer
       let nanoseconds = Double(frame) / scenario.sampleRate * 1e9
       let ticks = UInt64((nanoseconds * Self.timebaseDenom / Self.timebaseNumer).rounded())
+      // After an xrun the device clock has run on: sample time jumps ahead of the frame count.
+      let lost = Int64(xrunGaps.filter { $0 <= frame }.count) * Self.xrunFrames
       return CallbackStamp(
-        inputSampleTime: Double(frame), inputHostTime: ticks, inputRateScalar: 1,
+        inputSampleTime: Double(frame + lost), inputHostTime: ticks, inputRateScalar: 1,
         outputSampleTime: Double(frame), outputHostTime: ticks, outputRateScalar: 1,
         frames: scenario.bufferFrames)
     }
