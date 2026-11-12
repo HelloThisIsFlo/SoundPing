@@ -525,16 +525,16 @@ final class RTState: Sendable {
 
   /// Every recorded fault that overlaps `input` (input faults) or `output` (output faults).
   ///
-  /// The labels are loaded first, with acquiring loads: the IOProc appends a fault before the label
-  /// store that follows it, so every fault below those labels is visible by the time the rings are
-  /// read. Intervals are tested for overlap, not containment, and never merged.
+  /// Each ring publishes its count with a releasing store and `retained()` reads it with an
+  /// acquiring load, so every entry counted is visible. What bounds completeness is the caller's
+  /// wait: the IOProc appends a fault before the label store that follows it, and `HitListener`
+  /// asks only after `waitUntilCaptured` has acquire-loaded a label past the window. Intervals are
+  /// tested for overlap, not containment, and never merged.
   ///
   /// A ring that has overwritten old entries no longer knows what happened below the highest upper
   /// bound it overwrote. The part of a query below that bound gets one `logOverwritten` fault, so
   /// overflow rejects a hit instead of letting it through (IN-16).
   func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) -> [FaultInterval] {
-    _ = inputNextLabel.load(ordering: .acquiring)
-    _ = outputNextLabel.load(ordering: .acquiring)
     var found = Self.scan(
       inputFaults, inputOverloads, direction: .input, overlapping: input)
     found += Self.scan(
