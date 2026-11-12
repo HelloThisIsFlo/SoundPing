@@ -411,6 +411,57 @@ private actor RouteChangeBackend: AudioBackend {
     #expect(armed.first?.setup.inputBufferFrames == 256)
   }
 
+  // MARK: Overload sizing follows the settled buffer (IN-18)
+
+  @Test func theOverloadLookbackFollowsTheBufferTheDeviceSettledOn() {
+    let baselines = BufferBaselines([7: 128])
+    #expect(baselines.frames(7) == 128)
+    baselines.beginSettling()
+    baselines.adopt([7: 1024])
+    #expect(baselines.frames(7) == 1024, "the 'over' handler reads the adopted size")
+    // Two buffers, never less than 20 ms.
+    #expect(DeviceListeners.overloadLookback(bufferFrames: 1024, rate: 48_000) == 2048)
+    #expect(DeviceListeners.overloadLookback(bufferFrames: 128, rate: 48_000) == 960)
+  }
+
+  @Test func theFaultSettleGrowsWithTheSettledBufferButStaysInsideTheSpacingMargin() {
+    for rate in [44_100.0, 48_000, 96_000] {
+      for buffer in [16, 128, 256, 512, 1024, 2048, 4096] {
+        let info = BackendInfo(
+          sampleRate: rate, outputBufferFrames: buffer, inputBufferFrames: buffer / 2)
+        let settle = HitListener.settle(for: info)
+        let ms = Double(settle.frames) / rate * 1000
+        #expect(ms >= HitListener.faultSettleMs - 0.05, "\(buffer) @ \(rate)")
+        #expect(ms < HitScheduler.spacingMarginMs, "\(buffer) @ \(rate): \(ms) ms")
+        let twoBuffers = 2.0 * Double(buffer) / rate * 1000
+        #expect(settle.capped == (twoBuffers > HitListener.maxFaultSettleMs), "\(buffer) @ \(rate)")
+        if !settle.capped { #expect(ms >= twoBuffers - 0.05, "\(buffer) @ \(rate)") }
+      }
+    }
+    // 1024 frames at 48 kHz: one callback is 21 ms, so a fixed 20 ms settle was less than one.
+    let typical = HitListener.settle(
+      for: BackendInfo(sampleRate: 48_000, outputBufferFrames: 1024, inputBufferFrames: 1024))
+    #expect(typical.frames == 2048 && !typical.capped)
+  }
+
+  @Test func aRunAtABufferTooLargeForTheFullSettleSaysSo() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    let scenario = Scenario(
+      jitterFrames: 0.5, bufferFrames: 128, settledBufferFrames: 2048, seed: 5)
+    let outcome = await Self.run(SimulatedBackend(scenario: scenario), hits: 20, store: store)
+    let result = try #require(Self.finishedResult(outcome.events))
+    let warnings = result.preflight?.warnings ?? []
+    #expect(warnings.contains { $0.contains("2048-frame buffer") }, "\(warnings)")
+
+    let (small, cleanupSmall) = try Self.makeStore()
+    defer { cleanupSmall() }
+    let normal = await Self.run(
+      SimulatedBackend(scenario: Scenario(jitterFrames: 0.5, seed: 5)), hits: 20, store: small)
+    let normalWarnings = try #require(Self.finishedResult(normal.events)).preflight?.warnings ?? []
+    #expect(!normalWarnings.contains { $0.contains("overload check") })
+  }
+
   @Test func aChangeAfterTheSettledSizeIsAdoptedStillAborts() async throws {
     let (store, cleanup) = try Self.makeStore()
     defer { cleanup() }

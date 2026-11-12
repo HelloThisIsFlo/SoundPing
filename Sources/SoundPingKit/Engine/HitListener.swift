@@ -18,11 +18,26 @@ struct HitListener {
   static let windowPrerollMs = 5.0
   /// Callbacks that must be on record before two devices' clocks are fitted: the fit uses 33.
   static let mappingWarmupCallbacks = 2 * DeviceTimeline.halfWindow + 8
-  /// How long past the end of a window the listener waits before it asks for faults, so an HAL
-  /// 'over' notification that arrives a little after its glitch lands before the window is judged.
-  /// It must stay well below `HitScheduler.spacingMarginMs` (50): the wait may not reach the next
-  /// hit. Best effort; how late the HAL really notifies needs hardware to know.
+  /// How long past the end of a window the listener waits at least before it asks for faults, so
+  /// an HAL 'over' notification that arrives a little after its glitch lands before the window is
+  /// judged. Best effort; how late the HAL really notifies needs hardware to know.
   static let faultSettleMs = 20.0
+  /// The settle never reaches past this: it has to end inside `HitScheduler.spacingMarginMs`, the
+  /// slack between one hit's window and the next hit.
+  static let maxFaultSettleMs = HitScheduler.spacingMarginMs - 5
+
+  /// The settle for the buffers the devices settled on (IN-18): two of the larger buffer, at least
+  /// `faultSettleMs`, at most `maxFaultSettleMs`. `capped` says the two buffers did not fit.
+  static func settle(for info: BackendInfo) -> (frames: Int64, capped: Bool) {
+    let buffer = Double(Swift.max(info.inputBufferFrames, info.outputBufferFrames))
+    let wanted = Swift.max(faultSettleMs / 1000 * info.sampleRate, 2 * buffer)
+    let cap = maxFaultSettleMs / 1000 * info.sampleRate
+    return (Int64(Swift.min(wanted, cap).rounded(.up)), wanted > cap)
+  }
+
+  private let settleFrames: Int64
+  /// Said in the run's warnings when the settle had to be capped below two buffers.
+  let settleWarning: String?
 
   init(
     backend: any AudioBackend, info: BackendInfo, templateFrames: Int64, maxLatencyMs: Double,
@@ -34,6 +49,15 @@ struct HitListener {
     self.templateFrames = templateFrames
     self.maxLatencyFrames = Int64((maxLatencyMs / 1000 * info.sampleRate).rounded(.up))
     self.prerollFrames = Int64((Self.windowPrerollMs / 1000 * info.sampleRate).rounded(.up))
+    let settle = Self.settle(for: info)
+    self.settleFrames = settle.frames
+    self.settleWarning =
+      settle.capped
+      ? String(
+        format:
+          "at a %d-frame buffer the overload check waits only %.0f ms after each window (two buffers would reach the next hit), so an overload the HAL reports later than that may let a glitched hit through",
+        Swift.max(info.inputBufferFrames, info.outputBufferFrames), Self.maxFaultSettleMs)
+      : nil
   }
 
   /// What one listening window held.
@@ -77,7 +101,6 @@ struct HitListener {
       let start = Swift.max(0, hit.outputFrame - prerollFrames)
       range = start..<(hit.outputFrame + maxLatencyFrames + templateFrames)
     }
-    let settleFrames = Int64((Self.faultSettleMs / 1000 * info.sampleRate).rounded(.up))
     try await backend.waitUntilCaptured(throughInputFrame: range.upperBound + settleFrames)
     if twoDevice { mapping = try HostMapping(log: await backend.stampLog(), info: info) }
 

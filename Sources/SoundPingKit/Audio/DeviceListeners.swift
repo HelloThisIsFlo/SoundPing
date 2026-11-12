@@ -47,6 +47,9 @@ final class BufferBaselines: Sendable {
     }
   }
 
+  /// The size the device is expected to keep now: the settled one once `adopt` ran (IN-18).
+  func frames(_ id: AudioDeviceID) -> Int? { state.withLock { $0.frames[id] } }
+
   func adopt(_ frames: [AudioDeviceID: Int]) {
     state.withLock {
       for (id, size) in frames { $0.frames[id] = size }
@@ -91,6 +94,12 @@ final class DeviceListeners: Sendable {
   /// a measured one, and a device that notifies later than this slips a hit past (requires human
   /// verification on hardware). `HitListener.faultSettleMs` is its counterpart on the waiting side.
   static let overloadLookbackMs = 20.0
+
+  /// How far back an overload interval reaches for a device running at `bufferFrames`: two
+  /// buffers, and never less than `overloadLookbackMs`.
+  static func overloadLookback(bufferFrames: Int, rate: Double) -> Int {
+    Swift.max(2 * bufferFrames, Int((overloadLookbackMs / 1000 * rate).rounded(.up)))
+  }
 
   private struct Registration: @unchecked Sendable {
     var object: AudioObjectID
@@ -156,16 +165,18 @@ final class DeviceListeners: Sendable {
           if Self.layout(of: id) != layout { sink.yield(.streamConfigChanged(uid: uid)) }
         }
       }
-      // 'over'
-      let lookback = Swift.max(
-        2 * device.bufferFrames, Int((Self.overloadLookbackMs / 1000 * rate).rounded(.up)))
+      // 'over'. Sized from the buffer the device runs at now: the one it settled on once IO
+      // started (adopted by `adoptSettledBuffers`), not the one requested at open (IN-18).
       let captures = device.captures
       let plays = device.plays
-      let bufferFrames = device.bufferFrames
+      let openedBuffer = device.bufferFrames
       add(id, kAudioDeviceProcessorOverload) { [stopped] in
         guard !stopped.isSet else { return }
+        let buffer = baselines.frames(id) ?? openedBuffer
         rt.noteOverload(
-          onInput: captures, onOutput: plays, lookbackFrames: lookback, bufferFrames: bufferFrames)
+          onInput: captures, onOutput: plays,
+          lookbackFrames: Self.overloadLookback(bufferFrames: buffer, rate: rate),
+          bufferFrames: buffer)
       }
       // 'stpd'
       add(id, kAudioDevicePropertyIOStoppedAbnormally) { [stopped] in

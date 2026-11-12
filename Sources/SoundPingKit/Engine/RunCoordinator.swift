@@ -220,7 +220,7 @@ private struct Session: Sendable {
       permission: plan.permission.status, terminalApp: plan.permission.app.name,
       listenerKind: plan.listener, ceilingDbfs: plan.ceilingDbfs,
       lockedLevelDbfs: locked.levelDbfs, templateId: plan.templateId, probes: locked.probes,
-      warnings: plan.warnings + locked.warnings)
+      warnings: plan.warnings + locked.warnings + [listener.settleWarning].compactMap { $0 })
 
     continuation.yield(
       .armed(ArmedInfo(runId: runId, recipe: recipe.ref, parameters: parameters, setup: snapshot)))
