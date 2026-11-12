@@ -93,10 +93,16 @@ elif d.get("type") == "clockSelfTest":
 elif d.get("type") == "channelProbe":
     print("    exit %d, chose input channel %s" % (rc, d.get("chosen", {}).get("index")))
 else:
+    # A run that fails the valid-hit gate (exit 3) still prints a result, with null stats.
     m = d["measured"]
-    h = m[m["headline"]]
-    print("    exit %d, valid %d/%d, headline %s median %.2f frames, jitter %.2f frames" % (
-        rc, h["valid"], h["n"], m["headline"], h["median"]["frames"], h["jitter"]["frames"]))
+    h = m.get(m.get("headline")) or {}
+
+    def frames(stat):
+        value = (h.get(stat) or {}).get("frames")
+        return "-" if value is None else "%.2f" % value
+
+    print("    exit %d, valid %s/%s, headline %s median %s frames, jitter %s frames" % (
+        rc, h.get("valid", "-"), h.get("n", "-"), m.get("headline"), frames("median"), frames("jitter")))
 PYEOF
 }
 
@@ -202,6 +208,11 @@ def f(x, digits=2):
     return "-" if x is None else ("%.*f" % (digits, x))
 
 
+def frames_of(stat):
+    """The frames of a median/jitter stat, or None when the run had no valid hit (null stat)."""
+    return (stat or {}).get("frames")
+
+
 rows = []
 for name in ["repeat-1", "repeat-2", "click", "speakers-default", "speakers-click", "virtual-loopback"]:
     d = load(name)
@@ -211,19 +222,19 @@ for name in ["repeat-1", "repeat-2", "click", "speakers-default", "speakers-clic
         rows.append((name, "ERROR %s" % d.get("code"), "", "", "", "", "", "", ""))
         continue
     m, rep = d["measured"], d.get("reported") or {}
-    head = m[m["headline"]]
-    path = m["path"]
+    head = m.get(m.get("headline")) or {}
+    path = m.get("path") or {}
     app = m.get("appRoundTrip")
     io = m.get("ioOffset")
     rows.append((
         name,
         d["parameters"]["templateId"],
-        "%d/%d" % (head["valid"], head["n"]),
-        "%s %s" % (m["headline"], f(head["median"]["frames"])),
-        f(head["jitter"]["frames"]),
-        "%s / %s" % (f(rep.get("pathFrames"), 1), f(path["median"]["frames"])),
-        "%s / %s" % (f(rep.get("appRoundTripFrames"), 1), f(app["median"]["frames"]) if app else "-"),
-        "%s / %s" % (f(rep.get("expectedIoOffsetFrames"), 1), f(io["median"]["frames"]) if io else "-"),
+        "%s/%s" % (head.get("valid", "-"), head.get("n", "-")),
+        "%s %s" % (m.get("headline"), f(frames_of(head.get("median")))),
+        f(frames_of(head.get("jitter"))),
+        "%s / %s" % (f(rep.get("pathFrames"), 1), f(frames_of(path.get("median")))),
+        "%s / %s" % (f(rep.get("appRoundTripFrames"), 1), f(frames_of((app or {}).get("median")))),
+        "%s / %s" % (f(rep.get("expectedIoOffsetFrames"), 1), f(frames_of((io or {}).get("median")))),
         d["setup"]["output"]["name"] + " -> " + d["setup"]["input"]["name"],
     ))
 
