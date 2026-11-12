@@ -33,16 +33,25 @@ public enum Stats {
 
   /// Half-open bins [a, b). Bin width is 0.25 frame when the spread is at most 5 frames, else a
   /// twentieth of the spread. Nil when there is nothing to bin.
+  ///
+  /// Edges are `firstBinStartFrames + k * binWidthFrames`, computed exactly that way here and by any
+  /// reader, so a value on an edge lands in the upper bin even when the width is not representable.
   public static func histogram(latencies: [Double]) -> Histogram? {
     guard let lo = latencies.min(), let hi = latencies.max() else { return nil }
     let spread = hi - lo
     let width = spread <= 5 ? 0.25 : spread / 20
-    let first = (lo / width).rounded(.down) * width
-    var counts = [Int](repeating: 0, count: Int(((hi - first) / width).rounded(.down)) + 1)
-    for value in latencies {
-      let bin = Swift.min(counts.count - 1, Swift.max(0, Int(((value - first) / width).rounded(.down))))
-      counts[bin] += 1
+    var first = (lo / width).rounded(.down) * width
+    if first > lo { first -= width }  // lo / width rounded up in floating point
+
+    func bin(of value: Double) -> Int {
+      var k = Swift.max(0, Int(((value - first) / width).rounded(.down)))
+      while first + Double(k + 1) * width <= value { k += 1 }
+      while k > 0 && first + Double(k) * width > value { k -= 1 }
+      return k
     }
+
+    var counts = [Int](repeating: 0, count: bin(of: hi) + 1)
+    for value in latencies { counts[bin(of: value)] += 1 }
     return Histogram(binWidthFrames: width, firstBinStartFrames: first, counts: counts)
   }
 }
