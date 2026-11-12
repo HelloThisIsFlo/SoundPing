@@ -435,18 +435,41 @@ private struct Session: Sendable {
     // run.json goes first: if it cannot be written, no calibration or self-test record is left
     // pointing at a run that does not exist (WR-02).
     try store.write(result, to: folder)
+
+    // The run is saved. A side file that cannot be written now is a warning on a finished run, not
+    // a failure of it, and one failing never keeps the other from being tried (IN-13).
+    var sideFileWarnings: [String] = []
     if let record = calibration.record {
-      try CalibrationStore.record(record, in: store.paths.calibrations)
+      do {
+        try CalibrationStore.record(record, in: store.paths.calibrations)
+      } catch {
+        sideFileWarnings.append("calibration not stored: \(Self.reason(error))")
+        result.calibration = CalibrationRef(key: calibration.ref.key, stored: false)
+      }
     }
     if let selfTest {
       let key = ClockSelfTestKey(
         deviceUID: request.setup.output.uid, sampleRate: info.sampleRate,
         bufferFrames: info.inputBufferFrames)
-      try ClockSelfTestStore.record(
-        ClockSelfTestEntry(key: key, result: selfTest, runId: runId, measuredAt: createdAt),
-        in: store.paths.clockSelfTest)
+      do {
+        try ClockSelfTestStore.record(
+          ClockSelfTestEntry(key: key, result: selfTest, runId: runId, measuredAt: createdAt),
+          in: store.paths.clockSelfTest)
+      } catch {
+        sideFileWarnings.append("clock self-test record not stored: \(Self.reason(error))")
+      }
+    }
+    if !sideFileWarnings.isEmpty {
+      result.preflight?.warnings.append(contentsOf: sideFileWarnings)
+      // Best effort: run.json should say what happened. If this second write fails too, the first
+      // one still stands as the saved run.
+      _ = try? store.write(result, to: folder)
     }
     return result
+  }
+
+  private static func reason(_ error: Error) -> String {
+    (error as? SoundPingError)?.detail ?? error.localizedDescription
   }
 
   /// A run that passes the valid-hit gate leaves a round-trip calibration keyed by its whole path

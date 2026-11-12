@@ -297,6 +297,31 @@ import Testing
     #expect(stored.runId == result.runId)
   }
 
+  @Test func sideFilesThatCannotBeWrittenAreWarningsOnAFinishedRunNotFailures() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    // The run folder is made inside runs/, so only the files in the store root become unwritable.
+    #expect(chmod(store.paths.root.path, 0o555) == 0)
+    defer {
+      _ = chmod(store.paths.root.path, 0o755)
+      cleanup()
+    }
+
+    let result = try await Self.run(
+      Scenario(latencyFrames: 412.37, jitterFrames: 0, seed: 4), store: store)
+
+    // The run is saved and finished, and says the calibration is not there.
+    #expect(result.calibration?.stored == false)
+    let warnings = try #require(result.preflight?.warnings)
+    #expect(warnings.contains { $0.hasPrefix("calibration not stored:") }, "\(warnings)")
+    // The self-test record was still attempted after the calibration write failed.
+    #expect(warnings.contains { $0.hasPrefix("clock self-test record not stored:") }, "\(warnings)")
+
+    let saved = try store.load(result.runId)
+    #expect(saved.calibration?.stored == false, "run.json tells the truth about the calibration")
+    #expect(saved.preflight?.warnings == warnings)
+    #expect(try store.list().count == 1)
+  }
+
   @Test func aRunThatFailsTheValidHitGateStoresNothing() async throws {
     let (store, cleanup) = try Self.makeStore()
     defer { cleanup() }
