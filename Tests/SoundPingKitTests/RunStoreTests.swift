@@ -206,8 +206,47 @@ import Testing
     let listing = try store.list()
     #expect(listing.map(\.label) == ["a", "b", "old"])
     #expect(listing.first?.recipe == "round-trip")
-    #expect(listing.first?.medianMs == 2.08)
+    #expect(listing.first?.pathMs == 2.08)
     #expect(listing.first?.valid == 10)
+  }
+
+  @Test func aSameDeviceRunListsBufferPathAndTotalWithNoneAsTheHeadline() throws {
+    let (store, _, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    var run = Self.result(label: "loop")
+    // The stored marker says appRoundTrip; the listing must not lead with it.
+    run.measured = Measured(
+      headline: .appRoundTrip, domain: .sample,
+      path: SummaryStats(n: 10, valid: 10, median: StatValue(frames: 27, ms: 0.5625)),
+      appRoundTrip: SummaryStats(n: 10, valid: 10, median: StatValue(frames: 311, ms: 6.479)),
+      ioOffset: SummaryStats(n: 100, valid: 100, median: StatValue(frames: 284, ms: 5.917)))
+    try Self.save(run, in: store)
+
+    let row = try #require(try store.list().first)
+    #expect(row.pathMs == 0.5625)
+    #expect(row.bufferMs == 5.917)
+    #expect(row.totalMs == 6.479)
+    #expect(row.bufferFrames == 128)
+
+    let json = try String(
+      decoding: RunJSON.fileEncoder().encode(row), as: UTF8.self)
+    for key in ["\"pathMs\"", "\"bufferMs\"", "\"totalMs\""] {
+      #expect(json.contains(key), "the JSON listing carries \(key)")
+    }
+    #expect(!json.contains("medianMs"), "no single median is listed")
+  }
+
+  @Test func aTwoDeviceRunListsOnlyItsHostPath() throws {
+    let (store, _, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    var run = Self.result(label: "air")
+    run.measured.domain = .host
+    try Self.save(run, in: store)
+
+    let row = try #require(try store.list().first)
+    #expect(row.pathMs == 2.08)
+    #expect(row.bufferMs == nil)
+    #expect(row.totalMs == nil)
   }
 
   // MARK: load

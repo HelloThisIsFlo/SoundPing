@@ -110,7 +110,17 @@ struct PrettyRenderer {
     let warmupRejected = result.hits.filter { $0.phase == .warmup && $0.rejection != nil }.count
     if warmupRejected > 0 { lines.append("  warm-ups rejected: \(warmupRejected) (not counted)") }
 
+    var breakdownShown = false
     if let stats, stats.valid > 0 {
+      // A same-device run shows three figures and privileges none of them (Phase 1 decision);
+      // the per-hit statistics below describe the measured path.
+      if let breakdown = roundTripBreakdown(result) {
+        lines.append(contentsOf: breakdown)
+        breakdownShown = true
+      }
+      lines.append(
+        result.measured.domain == .sample
+          ? "Hardware path, per-hit statistics" : "Path (host clock), per-hit statistics")
       lines.append(statLine("median", stats.median))
       lines.append(statLine("jitter", stats.jitter, note: "p5–p95"))
       lines.append(statLine("p95", stats.p95))
@@ -123,7 +133,7 @@ struct PrettyRenderer {
       lines.append("Preflight: " + warnings.joined(separator: "; "))
     }
     if let selfTest = result.selfTest { lines.append(selfTestLine(selfTest)) }
-    lines.append(contentsOf: reportedVersusMeasured(result))
+    if !breakdownShown { lines.append(contentsOf: reportedVersusMeasured(result)) }
 
     let path = result.segments.map { Self.shortName(of: $0) }.joined(separator: " → ")
     lines.append("Segments: \(path)")
@@ -138,6 +148,53 @@ struct PrettyRenderer {
     String(
       format: "Clock self-test: %@ (median Δ %.2f, p95 |Δ| %.2f frames)",
       selfTest.pass ? "PASS" : "FAIL", selfTest.medianDeltaFrames, selfTest.p95AbsDeltaFrames)
+  }
+
+  /// A same-device round trip as three labelled figures, none of them "the" number: the hardware
+  /// path (measured), SoundPing's own buffer part (2 × buffer + both safety offsets) and the total
+  /// they add up to. What macOS reports sits beside the figures it can be compared with (RES-02);
+  /// it is information only and never applied. Nil when the run has no same-device figures.
+  func roundTripBreakdown(_ result: RunResult) -> [String]? {
+    let measured = result.measured
+    guard measured.domain == .sample, let path = measured.path?.median,
+      let buffer = measured.ioOffset?.median, let total = measured.appRoundTrip?.median
+    else { return nil }
+    let reported = result.reported
+    let rate = result.setup.sampleRate
+
+    func row(_ label: String, _ value: StatValue, _ note: String) -> String {
+      "  " + label.padded(to: 17)
+        + String(format: "%8.2f frames %8.3f ms", value.frames, value.ms) + "  " + note
+    }
+    func macOSReports(_ frames: Int) -> String {
+      let ms = rate > 0 ? Double(frames) / rate * 1000 : 0
+      return String(format: "; macOS reports %.2f frames, %.3f ms", Double(frames), ms)
+    }
+
+    var bufferNote = "Δio read from the stamps"
+    if let reported {
+      let out = reported.output
+      let inp = reported.input
+      let buffers =
+        out.bufferFrames == inp.bufferFrames
+        ? "2 × \(out.bufferFrames) buffer" : "\(out.bufferFrames) + \(inp.bufferFrames) buffer"
+      let formula =
+        "\(buffers) + \(inp.safetyOffsetFrames) safety in + \(out.safetyOffsetFrames) safety out"
+      bufferNote =
+        abs(buffer.frames - Double(reported.expectedIoOffsetFrames)) <= 0.5
+        ? "calculated: \(formula)"
+        : String(
+          format: "read from the stamps; %@ gives %d", formula, reported.expectedIoOffsetFrames)
+    }
+
+    return [
+      "Round trip at buffer \(result.setup.bufferFrames), \(Int(rate)) Hz",
+      row("hardware path", path, "measured" + (reported.map { macOSReports($0.pathFrames) } ?? "")),
+      row("SoundPing buffer", buffer, bufferNote),
+      row(
+        "total", total,
+        "path + buffer" + (reported.map { macOSReports($0.appRoundTripFrames) } ?? "")),
+    ]
   }
 
   /// What macOS says next to what was heard, so a mismatch shows which segment is off (RES-02).

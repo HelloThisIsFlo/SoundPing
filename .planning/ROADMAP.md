@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 4: Real Key Press & Chain Breakdown** - The latency a player actually feels from a real key, split into the chain parts measured so far
 - [ ] **Phase 5: Transport Comparison** - Bluetooth vs network vs cable MIDI side by side, opening with the iPad echo spike
 - [ ] **Phase 6: Native App** - Speed-test-style macOS app over every recipe, installed locally for daily use
-- [ ] **Phase 7: Open-Source Release** - Signed, notarised DMG, Homebrew cask, Sparkle updates and per-recipe docs for strangers
+- [ ] **Phase 7: Source-Available Release** - Signed, notarised DMG, Homebrew cask, Sparkle updates and per-recipe docs for strangers
 
 ## Phase Details
 
@@ -41,7 +41,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The result shows valid hits out of N, median, jitter (p5-p95), p95, max, a histogram and a per-hit timeline in samples and ms, with macOS/driver-reported latency next to the measured one and the segments covered and corrections applied (with their source) stated; repeat loopback runs agree within 1-2 samples
   3. Every run is saved with its metadata (devices, sample rate, buffer, recipe, date), a label and tags, and the round trip is stored as a calibration for that device pair, sample rate and buffer, labelled "round trip" and never applied as "mic delay"
   4. Broken setups stop with a named cause: missing mic permission (naming the terminal app that owns it), silent or clipping input, or a device that disappears or changes sample rate or buffer mid-run; `--simulate` runs the recipe with no gear, recovers the injected latency and jitter, and runs in CI
-  5. Exit gates before Phase 2: the host-clock self-test passes (sample-count and host-clock paths agree within ~2 samples), and the repo carries its chosen open-source licence before any ported code lands (the licence part of REL-04)
+  5. Exit gates before Phase 2: the host-clock self-test passes (sample-count and host-clock paths agree within ~2 samples), and the repo carries its chosen source-available licence (PolyForm Shield 1.0.0) before any ported code lands (the licence part of REL-04)
 **Plans**: 9/10 plans executed
 
 Plans:
@@ -140,7 +140,7 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 
-### Phase 7: Open-Source Release
+### Phase 7: Source-Available Release
 **Goal**: Strangers can install SoundPing without security workarounds, keep it updated, and set up every recipe from the docs
 **Mode:** mvp
 **Depends on**: Phase 6
@@ -166,4 +166,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Real Key Press & Chain Breakdown | 0/TBD | Not started | - |
 | 5. Transport Comparison | 0/TBD | Not started | - |
 | 6. Native App | 0/TBD | Not started | - |
-| 7. Open-Source Release | 0/TBD | Not started | - |
+| 7. Source-Available Release | 0/TBD | Not started | - |

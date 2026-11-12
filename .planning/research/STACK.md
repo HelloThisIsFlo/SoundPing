@@ -276,7 +276,7 @@ sequenceDiagram
 | App Sandbox | Breaks the bundled CLI from a terminal; complicates process taps; zero benefit for Developer ID | Hardened runtime + `audio-input` entitlement |
 | `codesign --deep` | Apple discourages it; it mis-signs nested code with the wrong entitlements | `xcodebuild -exportArchive` (developer-id), or sign the inner CLI first, then the app |
 | Apple ID + app-specific password in CI | 2FA friction, tied to a person | App Store Connect API key for `notarytool` |
-| Bundling GPL code (BlackHole, aubio, jack tools) | Forces GPL on SoundPing before the licence is even chosen | Apache/MIT deps only; GPL tools stay dev-side |
+| Bundling GPL code (BlackHole, aubio, jack tools) | Forces GPL on SoundPing, which is PolyForm Shield 1.0.0 | Apache/MIT deps only; GPL tools stay dev-side |
 
 ---
 
@@ -319,7 +319,7 @@ sequenceDiagram
 
 ## 📜 Licence check (everything recommended)
 
-| Component | Licence | Shipped? | OK for any SoundPing licence? |
+| Component | Licence | Shipped? | OK under PolyForm Shield 1.0.0? |
 |---|---|---|---|
 | swift-argument-parser, swift-log, Swift stdlib/`Synchronization` | Apache-2.0 | yes | ✅ |
 | Sparkle (optional) | MIT | yes | ✅ |
@@ -328,6 +328,8 @@ sequenceDiagram
 | OboeTester `LatencyAnalyzer` (if ported) | Apache-2.0 | maybe (ported code) | ✅ with NOTICE attribution |
 | BlackHole | GPL-3.0 | **no** (dev only) | ✅ as long as it's never bundled |
 | aubio / Essentia / jack_delay / jack_iodelay | GPL-3 / AGPL-3 / GPL | **no** | ❌ don't copy code; learn from methods only |
+
+- All shipped dependencies are MIT/Apache-2.0 and compatible with Shield for the rest of the repo; GPL tools stay dev-only and are never bundled.
 
 ---
 

@@ -79,6 +79,7 @@ Probe table for the default template (`speakers-probes-chirp-speaker.ndjson` in 
 - **Device:** `Loopback: Ableton Out` (Rogue Amoeba, 2 in / 2 out, 48 kHz), channel 1.
 - **Path is not about 0.** Measured **768 frames (16.0 ms)** at buffer 128, and **768 again at buffer 256**, while the HAL reports 0. The device has a fixed internal delay that its properties do not declare.
 - **Δio is exactly `2 × buffer`** (256 at 128, 512 at 256): safety offsets are 0 on this device, as reported.
+- 🔭 **Phase 3 note (Flo's question):** can SoundPing see where a virtual device like Loopback routes its audio? Not through CoreAudio, which exposes only the device's declared latency, not its internal routing. Measure the undeclared part with Phase 3's A/B method instead (the same chain with and without the device).
 
 ## 🧭 RESEARCH assumptions
 
@@ -107,7 +108,21 @@ Plan 01-08's code had only compiled before this bench. On real hardware:
 - From plan 01-07: change the sample rate or pull USB mid-run (not scripted).
 - From plan 01-03: the pretty TTY look.
 
-## 🔭 For the headline decision (plan 01-09 Task 2)
+## ✅ Headline decision (plan 01-09 Task 2, decided by Flo)
+
+**No single headline.** Neither `path` nor `appRoundTrip` is "the" round trip. A same-device result shows three labelled figures:
+
+| Figure | How it is known | Why it is shown |
+|---|---|---|
+| Hardware path | measured (HAL-reported figure beside it) | the only part a measurement discovers, e.g. the virtual Loopback device reports 0 but measures 768 frames / 16 ms |
+| SoundPing buffer | calculated: 2 × buffer + safety in + safety out (bench-proven exact at 64 / 128 / 256) | exact arithmetic, so it needs no measurement |
+| Total | path + buffer (`appRoundTrip`) | what you would feel at SoundPing's buffer |
+
+- 📋 `soundping runs list` has BUFFER, PATH and TOTAL columns; PATH is the one runs are compared by where a single value is needed. The JSON listing carries `bufferMs`, `pathMs`, `totalMs` (and `bufferFrames`) per run.
+- 💾 `measured.headline` stays in run.json as the marker the calibration record keys on; the calibration stored value is unchanged. No user-facing output presents it as "the" number.
+- ⏭️ One big number is deferred to Phase 6.
+
+## 🔭 Data behind the decision
 
 | | `path` | `appRoundTrip` |
 |---|---|---|

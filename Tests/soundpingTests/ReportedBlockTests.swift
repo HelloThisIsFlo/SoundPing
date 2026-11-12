@@ -68,16 +68,46 @@ import Testing
 
   private let renderer = PrettyRenderer(useColor: false)
 
-  @Test func aSameDeviceSummaryShowsReportedNextToMeasuredForPathRoundTripAndIoOffset() {
+  @Test func aSameDeviceSummaryShowsPathBufferAndTotalWithMacOSBesideThem() throws {
     let text = renderer.summary(Self.result(domain: .sample, setup: Self.scarlett))
-    #expect(text.contains("Reported vs measured"))
-    #expect(text.contains("path"))
-    #expect(text.contains("57.00 frames"), "reported path of the Scarlett fixture")
-    #expect(text.contains("412.37 frames"))
-    #expect(text.contains("341.00 frames"), "reported app round trip")
-    #expect(text.contains("696.37 frames"))
-    #expect(text.contains("284.00 frames"), "expected and measured Δio")
+    let lines = text.split(separator: "\n").map(String.init)
+    func line(_ prefix: String) throws -> String {
+      try #require(lines.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(prefix) })
+    }
+
+    #expect(text.contains("Round trip at buffer 128, 48000 Hz"), "\(text)")
+    let path = try line("hardware path")
+    #expect(path.contains("412.37 frames") && path.contains("measured"), "\(path)")
+    #expect(path.contains("macOS reports 57.00 frames"), "reported path of the Scarlett fixture")
+    let buffer = try line("SoundPing buffer")
+    #expect(buffer.contains("284.00 frames"), "expected and measured Δio: \(buffer)")
+    #expect(buffer.contains("calculated: 2 × 128 buffer +"), "the formula is shown: \(buffer)")
+    #expect(buffer.contains("safety in") && buffer.contains("safety out"), "\(buffer)")
+    let total = try line("total")
+    #expect(total.contains("696.37 frames") && total.contains("path + buffer"), "\(total)")
+    #expect(total.contains("macOS reports 341.00 frames"), "reported app round trip")
+    #expect(!text.contains("Reported vs measured"), "folded into the breakdown")
     #expect(text.contains("Corrections: none (raw measurement)"))
+  }
+
+  @Test func theBreakdownLeadsWithNoSingleHeadlineNumber() throws {
+    let text = renderer.summary(Self.result(domain: .sample, setup: Self.scarlett))
+    let lines = text.split(separator: "\n").map(String.init)
+    let headings = lines.filter { !$0.hasPrefix(" ") }
+    #expect(!headings.contains { $0.lowercased().contains("headline") }, "\(text)")
+    let breakdown = try #require(lines.firstIndex { $0.hasPrefix("Round trip at buffer") })
+    let rows = lines[(breakdown + 1)...].prefix(3).map { $0.trimmingCharacters(in: .whitespaces) }
+    #expect(rows.map { String($0.prefix(4)) } == ["hard", "Soun", "tota"], "\(rows)")
+  }
+
+  @Test func withoutReportedFiguresTheBreakdownStillShowsTheThreeMeasuredFigures() {
+    let text = renderer.summary(
+      Self.result(domain: .sample, setup: Self.scarlett, withReported: false))
+    #expect(text.contains("Round trip at buffer 128, 48000 Hz"), "\(text)")
+    #expect(text.contains("412.37 frames") && text.contains("284.00 frames"))
+    #expect(text.contains("696.37 frames"))
+    #expect(text.contains("Δio read from the stamps"), "\(text)")
+    #expect(!text.contains("macOS reports"), "\(text)")
   }
 
   @Test func aTwoDeviceSummaryShowsOnlyThePathAndSaysWhy() {
@@ -89,9 +119,10 @@ import Testing
     #expect(text.contains("Corrections: none (raw measurement)"))
   }
 
-  @Test func withoutReportedFiguresTheBlockIsLeftOut() {
+  @Test func aTwoDeviceRunWithoutReportedFiguresLeavesTheBlockOut() {
     let text = renderer.summary(
-      Self.result(domain: .sample, setup: Self.scarlett, withReported: false))
+      Self.result(domain: .host, setup: Self.speakersToMic, withReported: false))
     #expect(!text.contains("Reported vs measured"))
+    #expect(!text.contains("Round trip at buffer"), "a breakdown is defined for one device only")
   }
 }

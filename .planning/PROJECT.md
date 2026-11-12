@@ -2,7 +2,7 @@
 
 ## What This Is
 
-SoundPing is an open-source tool for musicians and audio tinkerers that measures where the latency in their music setup comes from. It started from Flo's own setup, which remains the first test bench. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
+SoundPing is a source-available tool (PolyForm Shield 1.0.0) for musicians and audio tinkerers that measures where the latency in their music setup comes from. It started from Flo's own setup, which remains the first test bench. It runs named tests, each a "recipe" made of a trigger (a click, a MIDI note sent by the tool, a real key press) and a listener (the MacBook mic or a loopback into the audio interface). Each test fires many hits and shows a speed-test-style result: median, jitter and a graph.
 
 ## Core Value
 
@@ -45,12 +45,12 @@ Trustworthy, comparable latency numbers for each segment of the chain (MIDI tran
   - Tool-sent MIDI on the same Mac never crosses Bluetooth, network or cable MIDI; comparing transports needs real key presses or an external echo device.
   - With headphones, the sound must reach the mic (ear cup held to the MacBook) or go through loopback.
 - **Platform:** macOS (MacBook built-in mic), Ableton Live.
-- **Audience:** open source, for anyone who wants to measure their latency. Flo's setup is the first test bench, not the only target, so nothing is hard-wired to his gear (device names, Ableton set, ports).
+- **Audience:** source-available, for anyone who wants to measure their latency. Flo's setup is the first test bench, not the only target, so nothing is hard-wired to his gear (device names, Ableton set, ports).
 
 ## Constraints
 
 - **Platform**: macOS first — CoreAudio/CoreMIDI timing is the point; other OSes aren't ruled out, but not in milestone 1
-- **Open source**: usable by strangers. Devices, MIDI ports and the DAW (Ableton is the reference, not a requirement) are configurable; installing and running it is documented; licence chosen before the first public release
+- **Source-available**: usable by strangers. Devices, MIDI ports and the DAW (Ableton is the reference, not a requirement) are configurable; installing and running it is documented; licence: PolyForm Shield 1.0.0, chosen in Phase 1
 - **DAW-agnostic**: tool-sent MIDI tests work with any app that turns a MIDI note into sound
 - **Accuracy**: timing must be traceable to the audio sample clock; a number that hides an uncorrected offset (e.g. mic delay) is worse than no number
 - **Evolvability**: start as a quick CLI but built around a shared engine that emits hits as live events, so new recipes and the native app plug in without rewrites
@@ -64,10 +64,13 @@ Trustworthy, comparable latency numbers for each segment of the chain (MIDI tran
 | Tests are "recipes" (trigger + listener) on one shared engine | "All of it, in different tests": new tests should be new recipes, not new tools | — Pending |
 | Phase order: engine + click calibration first, then tool-sent MIDI | Same-clock click is sample-accurate and proves the engine (round trip, not mic delay); debugging clock alignment before anything is proven is painful | — Pending |
 | CLI first, speed-test native macOS app later in milestone 1 (replaces the web UI idea) | macOS-first; Swift engine plugs straight into SwiftUI + Swift Charts; an app bundle owns its mic permission (a CLI inherits the terminal's); no localhost server to secure. Costs: notarisation (developer account available), no browser access from other devices | — Pending |
-| Calibration = round trip, never subtracted as "mic delay"; recipes cancel unknowns in one recording | Research: a click round trip can't split input from output; subtracting it double-counts output + air | — Pending |
-| Report median + jitter + graph over N hits | Best practice; jitter matters as much as the average for playing feel | — Pending |
+| Calibration = round trip, never subtracted as "mic delay"; recipes cancel unknowns in one recording | Research: a click round trip can't split input from output; subtracting it double-counts output + air | Validated on the bench (Phase 1): the stored round trip repeats to 0.00 frames on the Scarlett loop and is never applied to a measurement (01-BENCH.md) |
+| Report median + jitter + graph over N hits | Best practice; jitter matters as much as the average for playing feel | Validated on the bench (Phase 1): 100-hit runs, 100/100 valid, median and jitter stable across runs; digital loop only, acoustic paths still open (01-BENCH.md) |
 | Defer injected Mac keypress trigger | Tool-sent MIDI measures the same segment with cleaner timing | — Pending |
-| Open source, for anyone, not just Flo | Flo's call: no reason it should only serve his setup | — Pending |
+| Usable by anyone, not just Flo | Flo's call: no reason it should only serve his setup | — Pending |
+| Licence: PolyForm Shield 1.0.0, plus a CLA | Free for anyone to use, professionals included; nobody may offer a competing product, paid or free. Shield bans competing products, not profit in general. GPL-3.0 allows selling; MIT, Apache-2.0 and MPL-2.0 allow closed commercial products; PolyForm Noncommercial would ban paid musicians. Costly to reverse: the licence can be relaxed later only while Flo holds relicensing rights to every contribution, hence the CLA; released versions stay under Shield (D-16) | Decided (Phase 1) |
+| A same-device round trip is shown as three figures, no single headline: hardware path (measured, HAL-reported figure beside it), SoundPing buffer part (calculated: 2 × buffer + safety in + safety out), total (path + buffer) | The bench settled the arithmetic: Δio equals 2 × buffer + both safety offsets exactly at buffers 64, 128 and 256 (Scarlett, 14 + 14 safety), so the buffer part is calculable and `path` is the only part a measurement discovers (the virtual Loopback device reports 0 but measures 768 frames / 16 ms). The total is what you would feel at SoundPing's buffer. Each answers a different question, so none is privileged. `runs list` carries BUFFER, PATH and TOTAL per run, PATH being the column runs are compared by where one value is needed. Two-device runs headline the host-measured path as before. `measured.headline` stays in run.json as the marker the calibration record keys on (schema stability, calibration value unchanged), and no user-facing output presents it as "the" number. One big number is deferred to Phase 6 (01-BENCH.md) | Decided (Phase 1) |
+| Level-ramp probes are a separate, uncounted phase before the 5 declared warm-ups | The ramp needs up to 7 probe hits (−48 to −6 dBFS) and D-04 declares 5 warm-ups, so letting probes double as warm-ups would make the warm-up count depend on the path. Probes carry negative indices and never enter a statistic (D-14, RESEARCH open question 1) | Decided (Phase 1) |
 
 ## Evolution
 
