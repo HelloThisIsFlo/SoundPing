@@ -45,8 +45,9 @@ struct SimulationOptions: ParsableArguments {
   var simNoise: Double = 0.001
 
   @Option(
+    parsing: .unconditional,
     help:
-      "Simulated path gain in dB. The converter clamps at full scale, so a large value clips."
+      "Simulated path gain in dB (may be negative). The converter clamps at full scale, so a large value clips."
   )
   var simGainDb: Double = 0
 
@@ -88,6 +89,12 @@ struct SimulationOptions: ParsableArguments {
   )
   var simPermission = "authorized"
 
+  @Flag(help: "The simulated input delivers exact zeros whatever is played, like a dead source.")
+  var simInputZeros = false
+
+  @Flag(help: "The simulated output reports itself muted.")
+  var simMuted = false
+
   func scenario(seed: UInt64, bufferFrames: Int = 128) throws -> Scenario {
     guard let permission = PermissionStatus(rawValue: simPermission),
       permission != .notDetermined
@@ -102,6 +109,7 @@ struct SimulationOptions: ParsableArguments {
       pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
       xrunHits: simXrun.values,
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
-      faults: try simFault.map(Fault.parse), permission: permission, seed: seed)
+      faults: try simFault.map(Fault.parse), permission: permission, inputZeros: simInputZeros,
+      outputMuted: simMuted, seed: seed)
   }
 }

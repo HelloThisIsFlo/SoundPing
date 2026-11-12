@@ -14,8 +14,25 @@ struct RunOptions: ParsableArguments {
   @Option(help: "Random seed. A random one is drawn and recorded when omitted.")
   var seed: UInt64?
 
-  @Option(help: "Stimulus level in dBFS. Default: the recipe's start level.")
+  @Option(
+    parsing: .unconditional,
+    help:
+      "Test-sound level in dBFS, confirmed by one probe. Default: found by a ramp that starts at -48 dBFS and steps up 6 dB until the chirp is heard, never above the listener's ceiling."
+  )
   var level: Double?
+
+  @Option(
+    parsing: .unconditional,
+    help:
+      "The loudest test sound allowed, in dBFS (0 or below). Replaces the listener's ceiling: loopback -6, speakers -12, headphones -30, unknown -18. The only way to go louder than that."
+  )
+  var maxLevel: Double?
+
+  @Option(
+    help:
+      "Who hears the test sound: loopback, speaker, headphones or unknown. Default: worked out from the devices. It sets the ceiling and, without --template, the chirp band."
+  )
+  var listener: String?
 
   @Option(help: "Stimulus template id. Available: \(StimulusLibrary.ids.joined(separator: ", ")).")
   var template: String?
@@ -183,6 +200,26 @@ struct RunOptions: ParsableArguments {
       parameters.templateId = template
     }
     return RunRequest(
-      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags)
+      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags,
+      preflight: try preflightOptions())
+  }
+
+  /// `--max-level`, `--listener` and whether `--template` was named, checked before anything plays.
+  func preflightOptions() throws -> PreflightOptions {
+    var kind: ListenerKind?
+    if let listener {
+      guard let parsed = ListenerKind(rawValue: listener) else {
+        throw SoundPingError.usage(
+          "invalidParameters",
+          "--listener takes \(ListenerKind.allCases.map(\.rawValue).joined(separator: ", ")); got '\(listener)'",
+          context: ["parameter": "listener", "value": listener])
+      }
+      kind = parsed
+    }
+    if let maxLevel {
+      _ = try LevelRamp.resolveCeiling(kind: kind ?? .unknown, maxLevelDbfs: maxLevel)
+    }
+    return PreflightOptions(
+      maxLevelDbfs: maxLevel, listener: kind, templateFollowsListener: template == nil)
   }
 }

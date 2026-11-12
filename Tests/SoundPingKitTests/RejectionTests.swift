@@ -52,18 +52,36 @@ import Testing
     #expect(abs(try #require(path.median).frames - 412.37) <= 0.1)
   }
 
-  // +30 dB lands exactly on full scale at the -30 dBFS start level, which clips only 17 of 20 hits;
-  // +40 dB drives the converter well past it.
-  @Test func aHotPathClipsAndEveryHitIsRejectedAsClipped() async throws {
-    let scenario = Scenario(latencyFrames: 412.37, jitterFrames: 0, pathGainDb: 40, seed: 9)
-    let result = try await Self.run(scenario, hits: 20)
+  // The level ramp keeps an engine run below clipping: a hot path locks at the first probe and a
+  // hopeless one stops as `inputClipping` (LevelRampTests pins both). The correlator's own guard
+  // still has to catch a gain change in the middle of a run, so it is tested on a window it is
+  // handed directly: the chirp driven five times past full scale and flattened by the converter.
+  @Test func aFlatToppedChirpIsRejectedAsClipped() throws {
+    let template = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    var window = [Float](repeating: 0, count: 3_000)
+    for (index, sample) in template.samples.enumerated() {
+      window[600 + index] = Swift.max(-1, Swift.min(1, sample * 5))
+    }
+    let span = window[600..<(600 + template.samples.count)]
+    #expect(span.filter { abs($0) >= 0.999 }.count >= 3, "the synthesized span really is clipped")
 
-    let measured = result.hits.filter { $0.phase == .measure }
-    #expect(measured.count == 20)
-    #expect(measured.allSatisfy { $0.rejection == .clipped })
-    #expect(result.rejectedCounts[RejectionReason.clipped.rawValue] == 20)
-    #expect(try #require(result.measured.path).valid == 0)
-    #expect(result.measured.path?.median == nil)
+    let detection = Correlator(template: template).detect(
+      window: window, windowStartFrame: 0, stamps: [])
+    #expect(detection == .rejected(.clipped))
+  }
+
+  @Test func aCleanChirpInTheSameWindowIsNotRejectedAsClipped() throws {
+    let template = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    var window = [Float](repeating: 0, count: 3_000)
+    for (index, sample) in template.samples.enumerated() { window[600 + index] = sample * 0.3 }
+
+    let detection = Correlator(template: template).detect(
+      window: window, windowStartFrame: 0, stamps: [])
+    guard case .found(let frame, _, _, _) = detection else {
+      Issue.record("expected a found hit, got \(detection)")
+      return
+    }
+    #expect(abs(frame - 600) < 0.5)
   }
 
   @Test func aFaultIndexBeyondTheRunIsAUsageError() async throws {

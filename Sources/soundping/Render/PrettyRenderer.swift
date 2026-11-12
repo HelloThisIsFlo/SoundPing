@@ -15,6 +15,21 @@ struct PrettyRenderer {
 
   // MARK: live lines
 
+  /// One level-ramp probe: dimmed, because it is a throwaway and no hit.
+  func probeLine(_ probe: ProbeRecord) -> String {
+    dim(
+      String(
+        format: "probe %4.0f dBFS  conf %.2f  peak %6.1f dBFS", probe.levelDbfs, probe.confidence,
+        probe.peakDbfs))
+  }
+
+  /// The level every hit of the run plays at, and why it is no louder.
+  func lockLine(_ lock: LevelLock) -> String {
+    String(
+      format: "Level locked at %.0f dBFS (%@, ceiling %.0f dBFS)", lock.levelDbfs,
+      lock.listenerKind.rawValue, lock.ceilingDbfs)
+  }
+
   /// One line before the first hit: what is about to be measured.
   func armedLine(_ info: ArmedInfo) -> String {
     let setup = info.setup
@@ -80,6 +95,9 @@ struct PrettyRenderer {
       lines.append("no valid hits: nothing to report")
     }
 
+    if let warnings = result.preflight?.warnings, !warnings.isEmpty {
+      lines.append("Preflight: " + warnings.joined(separator: "; "))
+    }
     if let selfTest = result.selfTest { lines.append(selfTestLine(selfTest)) }
     lines.append(contentsOf: reportedVersusMeasured(result))
 

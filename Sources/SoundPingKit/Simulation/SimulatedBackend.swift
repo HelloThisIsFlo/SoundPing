@@ -284,9 +284,12 @@ public actor SimulatedBackend: AudioBackend {
     pendingEvents = faultEvents()
   }
 
-  /// A fault index that names no scheduled hit is a typo, not a no-op (T-01-15).
+  /// A fault index that names no scheduled hit is a typo, not a no-op (T-01-15). Probes carry
+  /// negative indices and are not hits: until a real hit is scheduled there is nothing to check
+  /// the knobs against, so the check waits for the first one.
   private func validateFaultIndices() throws {
     let highest = hits.map(\.index).max() ?? -1
+    guard highest >= 0 else { return }
     for (name, indices) in [
       ("sim-miss", scenario.missedHits), ("sim-xrun", scenario.xrunHits),
       ("sim-fault", scenario.faults.map(\.atHit)),
@@ -431,10 +434,9 @@ public actor SimulatedBackend: AudioBackend {
 
     // A converter cannot go past full scale.
     for offset in 0..<count { out[offset] = Swift.max(-1, Swift.min(1, out[offset])) }
-    // Without consent the system hands a process exact zeros, not an error.
-    if scenario.permission == .denied || scenario.permission == .restricted {
-      out = [Float](repeating: 0, count: count)
-    }
+    // Without consent the system hands a process exact zeros, not an error; so does a dead source.
+    let withoutConsent = scenario.permission == .denied || scenario.permission == .restricted
+    if withoutConsent || scenario.inputZeros { out = [Float](repeating: 0, count: count) }
     return out
   }
 
@@ -557,7 +559,8 @@ public actor SimulatedBackend: AudioBackend {
   private func jitter(forHit index: Int) -> Double {
     guard scenario.jitterFrames > 0 else { return 0 }
     var rng = SplitMix64(
-      seed: scenario.seed ^ 0x6A09_E667_F3BC_C909 &+ UInt64(index) &* 0xBB67_AE85_84CA_A73B)
+      seed: scenario.seed ^ 0x6A09_E667_F3BC_C909 &+ UInt64(bitPattern: Int64(index))
+        &* 0xBB67_AE85_84CA_A73B)
     let u1 = 1 - rng.nextDouble()
     let u2 = rng.nextDouble()
     return scenario.jitterFrames * (-2 * log(u1)).squareRoot() * cos(2 * Double.pi * u2)

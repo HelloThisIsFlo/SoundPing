@@ -436,7 +436,7 @@ import Testing
     for _ in 0..<2 {
       let (result, events) = try await Self.run(
         Scenario(jitterFrames: 0, seed: 2), hits: 5, store: store)
-      if case .armed(let info) = events.first { armedIds.append(info.runId) }
+      for case .armed(let info) in events { armedIds.append(info.runId) }
       finalIds.append(result.runId)
     }
     #expect(armedIds == finalIds)

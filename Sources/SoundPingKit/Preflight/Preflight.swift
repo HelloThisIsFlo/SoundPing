@@ -52,6 +52,75 @@ public struct Preflight: Sendable {
     return .preflight(
       "micPermissionDenied", "Microphone access is \(word) for \(app.name)", context: context)
   }
+
+  /// Fails the run when the output is muted, process-muted or at volume zero. Read only: the
+  /// user's volume is never touched (T-01-30).
+  public func checkOutput(on backend: any AudioBackend) async throws {
+    let state = await backend.outputMuteState()
+    if let reason = state.reason { throw Self.mutedError(reason: reason) }
+  }
+
+  static func mutedError(reason: String) -> SoundPingError {
+    .preflight(
+      "outputMuted", "The output is muted: \(reason)",
+      context: [
+        "reason": reason,
+        "fix":
+          "unmute the output or raise its volume, then rerun; SoundPing never changes your volume",
+      ])
+  }
+
+  /// Exact zeros while a test sound plays: no signal path, as opposed to a weak one.
+  static func silenceError(device: String, channel: String?) -> SoundPingError {
+    let place = channel.map { "\(device), \($0)" } ?? device
+    return .preflight(
+      "inputDigitalSilence",
+      "The input delivered only zeros while a test sound played (\(place))",
+      context: [
+        "device": device,
+        "fix":
+          "check that this input channel carries a live source, is not muted, and (for a virtual device) has something routed into it, then rerun",
+      ])
+  }
+
+  static func clippingError(peakDbfs: Double, levelDbfs: Double) -> SoundPingError {
+    .preflight(
+      "inputClipping",
+      String(
+        format:
+          "The input peaks at %.1f dBFS (clipping starts at %.0f) with the test sound at %.0f dBFS",
+        peakDbfs, LevelRamp.clippingDbfs, levelDbfs),
+      context: [
+        "peakDbfs": String(peakDbfs), "levelDbfs": String(levelDbfs),
+        "fix": "turn the input gain or the loop level down, then rerun",
+      ])
+  }
+
+  static func nothingHeardError(
+    ceilingDbfs: Double, listener: ListenerKind, probes: Int, chosenLevel: Double?,
+    terminalApp: String?
+  ) -> SoundPingError {
+    let detail: String
+    if let chosenLevel {
+      detail = String(format: "Nothing was heard at the chosen level of %.0f dBFS", chosenLevel)
+    } else {
+      detail = String(
+        format: "Nothing was heard even at the ceiling of %.0f dBFS for a %@ listener",
+        ceilingDbfs, listener.rawValue)
+    }
+    let access = terminalApp.map { " for \($0)" } ?? ""
+    var fix =
+      "check the cable or loop routing, that microphone access is allowed\(access), the output volume and the input gain, then rerun"
+    if listener == .headphones || listener == .speaker {
+      fix += "; raise the ceiling with --max-level only when you know the level is safe"
+    }
+    return .preflight(
+      "nothingHeardAtCeiling", detail,
+      context: [
+        "ceilingDbfs": String(ceilingDbfs), "listener": listener.rawValue,
+        "probes": String(probes), "fix": fix,
+      ])
+  }
 }
 
 /// Whether the output is muted at any of the three places the system keeps a mute. Read, never set:

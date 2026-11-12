@@ -66,9 +66,11 @@ struct SelftestCommand: AsyncParsableCommand {
           if output.ndjson { try ndjson.write(event) }
           if !output.isDataMode {
             switch event {
+            case .probe(let probe): Output.writeLine(pretty.probeLine(probe))
+            case .levelLocked(let lock): Output.writeLine(pretty.lockLine(lock))
             case .armed(let info): Output.writeLine(pretty.armedLine(info))
             case .hit(let record), .rejected(let record): Output.writeLine(pretty.hitLine(record))
-            case .probe, .levelLocked, .aborted, .selfTest, .finished: break
+            case .aborted, .selfTest, .finished: break
             }
           }
           if case .finished(let result) = event { finished = result }

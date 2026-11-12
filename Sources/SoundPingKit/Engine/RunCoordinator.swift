@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 
 /// Runs a recipe against an `AudioBackend` and narrates it as a stream of `RunEvent`s (D-03).
 /// Every renderer, the saved run.json and the later app read this one stream.
@@ -37,23 +36,26 @@ public actor RunCoordinator {
   }
 }
 
-/// Input frames an audio-thread overload touched, written by the device-event listener and read
-/// by the measuring loop.
-private final class FaultMonitor: Sendable {
-  private let overloads = Mutex<[Int64]>([])
-
-  func recordOverload(atInputFrame frame: Int64) {
-    overloads.withLock { $0.append(frame) }
-  }
-
-  func hasOverload(in range: Range<Int64>) -> Bool {
-    overloads.withLock { $0.contains(where: range.contains) }
-  }
-}
-
 private enum Outcome: Sendable {
   case measured(RunResult)
   case eventsEnded
+}
+
+/// What the checks before the first sound settled: who owns the microphone permission, who will
+/// hear the sound, how loud it may get and which chirp it is.
+private struct PreflightPlan: Sendable {
+  var permission: Preflight.PermissionOutcome
+  var listener: ListenerKind
+  var ceilingDbfs: Double
+  var templateId: String
+  var warnings: [String]
+}
+
+/// The level the ramp settled on, with the probes that got there.
+private struct LockedLevel: Sendable {
+  var levelDbfs: Double
+  var probes: [ProbeRecord]
+  var warnings: [String]
 }
 
 /// One run, start to finish. Never sleeps on the wall clock: it waits on sample positions.
@@ -66,17 +68,17 @@ private struct Session: Sendable {
 
   func run() async throws {
     let parameters = request.parameters
-    let nominal = try StimulusLibrary.template(id: parameters.templateId, sampleRate: 48_000)
-    try HitScheduler.validate(parameters, templateDurationMs: nominal.durationMs)
+    let nominals = try candidateTemplates()
+    try HitScheduler.validate(parameters, templateDurationMs: nominals[0].durationMs)
     // A store file this build cannot read fails the run now, before any audio, not after it (T-01-21).
     _ = try ClockSelfTestStore.load(from: store.paths.clockSelfTest)
     _ = try CalibrationStore.load(from: store.paths.calibrations)
 
     let result: RunResult
     do {
-      let info = try await backend.open(request.setup, templates: [nominal])
-      try await preflight()
-      result = try await supervise(info: info, nominal: nominal)
+      let info = try await backend.open(request.setup, templates: nominals)
+      let plan = try await preflight(info: info)
+      result = try await supervise(info: info, plan: plan, nominals: nominals)
       await backend.stop()
     } catch {
       await backend.stop()
@@ -85,18 +87,49 @@ private struct Session: Sendable {
     continuation.yield(.finished(result))
   }
 
-  /// The checks before any sound is played. A failure is announced on the stream, then thrown.
-  private func preflight() async throws {
+  /// The requested template first, then both chirp bands when the listener picks the band.
+  private func candidateTemplates() throws -> [StimulusTemplate] {
+    var ids = [request.parameters.templateId]
+    if request.preflight.templateFollowsListener {
+      for id in ["chirp-loopback", "chirp-speaker"] where !ids.contains(id) { ids.append(id) }
+    }
+    return try ids.map { try StimulusLibrary.template(id: $0, sampleRate: 48_000) }
+  }
+
+  /// A named failure is announced on the stream, then thrown.
+  private func fail(_ error: SoundPingError) -> SoundPingError {
+    continuation.yield(.aborted(error))
+    return error
+  }
+
+  /// The checks before any sound is played, in their fixed order: microphone permission, then the
+  /// output's mute and volume. The level ramp is the third check and runs once the audio is going.
+  private func preflight(info: BackendInfo) async throws -> PreflightPlan {
+    let checks = Preflight(resolver: resolver)
     do {
-      _ = try await Preflight(resolver: resolver).checkPermission(on: backend)
+      let permission = try await checks.checkPermission(on: backend)
+      try await checks.checkOutput(on: backend)
+      let listener =
+        request.preflight.listener
+        ?? LevelRamp.classify(
+          setup: request.setup, output: info.outputDevice, input: info.inputDevice)
+      let ceiling = try LevelRamp.resolveCeiling(
+        kind: listener, maxLevelDbfs: request.preflight.maxLevelDbfs)
+      let templateId =
+        request.preflight.templateFollowsListener
+        ? LevelRamp.templateId(for: listener) : request.parameters.templateId
+      return PreflightPlan(
+        permission: permission, listener: listener, ceilingDbfs: ceiling, templateId: templateId,
+        warnings: [])
     } catch let error as SoundPingError {
-      continuation.yield(.aborted(error))
-      throw error
+      throw fail(error)
     }
   }
 
   /// Measures while listening for device events; a device change aborts the run (ENG-07).
-  private func supervise(info: BackendInfo, nominal: StimulusTemplate) async throws -> RunResult {
+  private func supervise(info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate])
+    async throws -> RunResult
+  {
     let monitor = FaultMonitor()
     let backend = self.backend
     let continuation = self.continuation
@@ -114,7 +147,8 @@ private struct Session: Sendable {
         return .eventsEnded
       }
       group.addTask {
-        .measured(try await measure(info: info, nominal: nominal, monitor: monitor))
+        .measured(
+          try await measure(info: info, plan: plan, nominals: nominals, monitor: monitor))
       }
       while let outcome = try await group.next() {
         if case .measured(let result) = outcome {
@@ -151,9 +185,9 @@ private struct Session: Sendable {
     }
   }
 
-  private func measure(info: BackendInfo, nominal: StimulusTemplate, monitor: FaultMonitor)
-    async throws -> RunResult
-  {
+  private func measure(
+    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate], monitor: FaultMonitor
+  ) async throws -> RunResult {
     // The folder exists before `armed` is announced, so the run id on the stream is the final one,
     // collision suffix included. A run that dies before run.json is written takes its empty folder along.
     let createdAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
@@ -161,7 +195,8 @@ private struct Session: Sendable {
       recipeId: request.recipe.id, label: request.label, createdAt: createdAt)
     do {
       return try await measure(
-        info: info, nominal: nominal, monitor: monitor, folder: folder, createdAt: createdAt)
+        info: info, plan: plan, nominals: nominals, monitor: monitor, folder: folder,
+        createdAt: createdAt)
     } catch {
       Self.removeIfEmpty(folder)
       throw error
@@ -174,85 +209,68 @@ private struct Session: Sendable {
   }
 
   private func measure(
-    info: BackendInfo, nominal: StimulusTemplate, monitor: FaultMonitor, folder: URL,
-    createdAt: Date
+    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate], monitor: FaultMonitor,
+    folder: URL, createdAt: Date
   ) async throws -> RunResult {
-    let parameters = request.parameters
+    var parameters = request.parameters
+    parameters.templateId = plan.templateId
     let recipe = request.recipe
     let sampleRate = info.sampleRate
+    guard let nominal = nominals.first(where: { $0.id == plan.templateId }) else {
+      throw SoundPingError.internalFailure(
+        "unknownTemplate", "the template '\(plan.templateId)' was never opened")
+    }
     let template = try nominal.atSampleRate(sampleRate)
-    let templateFrames = Int64(template.samples.count)
-    let maxLatencyFrames = Int64((parameters.maxLatencyMs / 1000 * sampleRate).rounded(.up))
 
     let runId = folder.lastPathComponent
     let snapshot = SetupSnapshot(
       setup: request.setup, sampleRate: sampleRate, bufferFrames: info.bufferFrames,
       simulated: info.simulation != nil)
-    continuation.yield(
-      .armed(
-        ArmedInfo(runId: runId, recipe: recipe.ref, parameters: parameters, setup: snapshot)))
 
     try await backend.start()
-    let twoDevice = request.setup.output.uid != request.setup.input.uid
+    var listener = HitListener(
+      backend: backend, info: info, templateFrames: Int64(template.samples.count),
+      maxLatencyMs: parameters.maxLatencyMs,
+      twoDevice: request.setup.output.uid != request.setup.input.uid, monitor: monitor)
+    try await listener.prepareClockMapping()
 
-    // Two devices count their samples separately, so a hit's input window is found through host
-    // time: that needs a stretch of callbacks on both sides to fit before the first hit.
-    var mapping: HostMapping?
-    if twoDevice {
-      let first = await backend.currentInputFrame()
-      try await backend.waitUntilCaptured(
-        throughInputFrame: first + Int64(Self.mappingWarmupCallbacks * info.bufferFrames))
-      mapping = try HostMapping(log: await backend.stampLog(), info: info)
-    }
+    // The third check: find the level, then lock it for every warm-up and measured hit (D-14).
+    let locked = try await lockLevel(plan: plan, template: template, listener: &listener)
+    continuation.yield(
+      .levelLocked(
+        LevelLock(
+          levelDbfs: locked.levelDbfs, listenerKind: plan.listener, ceilingDbfs: plan.ceilingDbfs,
+          templateId: plan.templateId)))
+    let report = PreflightReport(
+      permission: plan.permission.status, terminalApp: plan.permission.app.name,
+      listenerKind: plan.listener, ceilingDbfs: plan.ceilingDbfs,
+      lockedLevelDbfs: locked.levelDbfs, templateId: plan.templateId, probes: locked.probes,
+      warnings: plan.warnings + locked.warnings)
 
-    let level = parameters.levelDbfs ?? recipe.startLevelDbfs
+    continuation.yield(
+      .armed(ArmedInfo(runId: runId, recipe: recipe.ref, parameters: parameters, setup: snapshot)))
+
     let scheduled = HitScheduler.schedule(
       parameters: parameters,
       startFrame: await backend.currentOutputFrame(),
       sampleRate: sampleRate,
-      gain: Float(pow(10, level / 20)),
+      gain: Float(pow(10, locked.levelDbfs / 20)),
       templateId: template.id)
     try await backend.schedule(scheduled)
 
     let correlator = Correlator(template: template)
-    let prerollFrames = Int64((Self.windowPrerollMs / 1000 * sampleRate).rounded(.up))
     var records: [HitRecord] = []
     for hit in scheduled {
       try Task.checkCancellation()
-      // One device: output and input share their sample labels, so the stimulus is listened for
-      // from the frame it was played. Two devices: from where host time puts it on the input clock.
-      let range: Range<Int64>
-      if let mapping {
-        range = mapping.inputWindow(
-          forOutputFrame: hit.outputFrame, prerollFrames: prerollFrames,
-          lengthFrames: maxLatencyFrames + templateFrames)
-      } else {
-        range = hit.outputFrame..<(hit.outputFrame + maxLatencyFrames + templateFrames)
-      }
-      try await backend.waitUntilCaptured(throughInputFrame: range.upperBound)
-      if twoDevice { mapping = try HostMapping(log: await backend.stampLog(), info: info) }
+      let heard = try await listener.listen(to: hit, with: correlator)
 
       var record = HitRecord(
         index: hit.index,
         phase: HitScheduler.phase(forHit: hit.index, warmup: parameters.warmup),
         outputFrame: hit.outputFrame)
-      let detection: Detection
-      if monitor.hasOverload(in: range) {
-        detection = .rejected(.discontinuity)
-      } else {
-        let window = try await backend.capture(range)
-        let stamps = await backend.stamps(covering: range)
-        detection = correlator.detect(
-          window: window, windowStartFrame: range.lowerBound, stamps: stamps)
-      }
-
-      switch detection {
-      case .found(let frame, let confidence, let psr, _):
-        // Same device: the distance between the two sample labels. Two devices: the distance
-        // between the host times the two labels were stamped with, in frames at the nominal rate.
-        let latency =
-          mapping?.hostPathFrames(outputFrame: hit.outputFrame, inputSample: frame)
-          ?? frame - Double(hit.outputFrame)
+      switch heard.detection {
+      case .found(_, let confidence, let psr, _):
+        let latency = heard.latencyFrames ?? 0
         record.latencyFrames = latency
         record.latencyMs = latency / sampleRate * 1000
         record.confidence = confidence
@@ -266,19 +284,76 @@ private struct Session: Sendable {
     }
 
     return try await finish(
-      records: records, info: info, snapshot: snapshot, folder: folder, createdAt: createdAt)
+      records: records, info: info, snapshot: snapshot, parameters: parameters,
+      preflight: report, folder: folder, createdAt: createdAt)
   }
 
-  /// Listening starts this long before the stimulus is expected, so a mapping that is a few frames
-  /// off (or a driver that stamps slightly early) still finds the hit.
-  private static let windowPrerollMs = 5.0
-  /// Callbacks that must be on record before two devices' clocks are fitted: the fit uses 33.
-  private static let mappingWarmupCallbacks = 2 * DeviceTimeline.halfWindow + 8
+  // MARK: Level ramp
+
+  /// Plays uncounted probes until the chirp is heard clearly, and names the cause when it cannot
+  /// be: only zeros, a clipping input, or nothing even at the ceiling (ENG-03, D-14). Each probe
+  /// is an event on the stream and an entry in the saved report; none is a hit.
+  private func lockLevel(
+    plan: PreflightPlan, template: StimulusTemplate, listener: inout HitListener
+  ) async throws -> LockedLevel {
+    let fixed = request.parameters.levelDbfs
+    var ramp = LevelRamp(ceilingDbfs: plan.ceilingDbfs, fixedLevelDbfs: fixed)
+    var warnings: [String] = []
+    if let fixed, fixed > plan.ceilingDbfs {
+      warnings.append(
+        String(
+          format:
+            "--level %.0f dBFS is above the %.0f dBFS ceiling for a %@ listener, so %.0f dBFS is used; pass --max-level to raise the ceiling",
+          fixed, plan.ceilingDbfs, plan.listener.rawValue, plan.ceilingDbfs))
+    }
+
+    var player = ProbePlayer(backend: backend, template: template)
+    var probes: [ProbeRecord] = []
+    var level = ramp.firstLevel
+    while true {
+      try Task.checkCancellation()
+      let played = try await player.play(atLevel: level, using: &listener)
+      if played.silent { throw fail(await silenceError()) }
+      probes.append(played.record)
+      continuation.yield(.probe(played.record))
+
+      switch ramp.record(
+        level: level, confidence: played.record.confidence, peakDbfs: played.record.peakDbfs)
+      {
+      case .probe(let next):
+        level = next
+      case .lock(let locked, let warning):
+        if let warning { warnings.append(warning) }
+        return LockedLevel(levelDbfs: locked, probes: probes, warnings: warnings)
+      case .fail(.clipping):
+        throw fail(
+          Preflight.clippingError(peakDbfs: played.record.peakDbfs, levelDbfs: level))
+      case .fail(.nothingHeard):
+        throw fail(
+          Preflight.nothingHeardError(
+            ceilingDbfs: plan.ceilingDbfs, listener: plan.listener, probes: probes.count,
+            chosenLevel: fixed, terminalApp: plan.permission.app.name))
+      }
+    }
+  }
+
+  /// All-zero input is the permission when the system now says access is denied, and a dead
+  /// signal path otherwise (a muted source, a wrong channel, a virtual device with nothing in it).
+  private func silenceError() async -> SoundPingError {
+    let status = await backend.permissionStatus()
+    if let denied = Preflight.permissionError(status: status, app: resolver.resolve()) {
+      return denied
+    }
+    return Preflight.silenceError(
+      device: request.setup.input.name, channel: request.setup.inChannelName)
+  }
+
+  // MARK: Result
 
   /// Warm-ups stay in hits[] but never enter a statistic (D-04).
   private func finish(
-    records: [HitRecord], info: BackendInfo, snapshot: SetupSnapshot, folder: URL,
-    createdAt: Date
+    records: [HitRecord], info: BackendInfo, snapshot: SetupSnapshot, parameters: RunParameters,
+    preflight: PreflightReport, folder: URL, createdAt: Date
   ) async throws -> RunResult {
     let runId = folder.lastPathComponent
     let measured = records.filter { $0.phase == .measure }
@@ -347,7 +422,7 @@ private struct Session: Sendable {
       recipe: request.recipe.ref,
       label: request.label,
       tags: request.tags,
-      parameters: request.parameters,
+      parameters: parameters,
       setup: snapshot,
       measured: figures,
       histogram: Stats.histogram(latencies: latencies),
@@ -358,7 +433,8 @@ private struct Session: Sendable {
       simulation: info.simulation,
       selfTest: selfTest,
       hostTimebase: hostTimebase,
-      reported: reported)
+      reported: reported,
+      preflight: preflight)
 
     result.runPath = folder.path
     result.calibration = try storeCalibration(
@@ -406,49 +482,5 @@ private struct Session: Sendable {
   private static func operatingSystem() -> String {
     let v = ProcessInfo.processInfo.operatingSystemVersion
     return "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
-  }
-}
-
-/// The two devices' clocks of a two-device run, fitted from the callbacks logged so far. It places
-/// each hit's input window and measures the hit through host time (CAL-03).
-private struct HostMapping {
-  let output: DeviceTimeline
-  let input: DeviceTimeline
-  let clock: HostClock
-  let sampleRate: Double
-
-  init(log: StampLog, info: BackendInfo) throws {
-    guard
-      let output = DeviceTimeline(
-        points: log.output, sampleRate: info.sampleRate, clock: info.hostClock),
-      let input = DeviceTimeline(
-        points: log.input, sampleRate: info.sampleRate, clock: info.hostClock)
-    else {
-      throw SoundPingError.internalFailure(
-        "timelineUnavailable",
-        "the backend logged no callback timestamps, so the two devices' clocks cannot be related")
-    }
-    self.output = output
-    self.input = input
-    self.clock = info.hostClock
-    self.sampleRate = info.sampleRate
-  }
-
-  /// The input frames to listen to for a hit played at `outputFrame`: where the input device's
-  /// clock stands when the output device plays that frame, less a pre-roll. The hit has not been
-  /// heard yet when this is asked, so the output frame may lie beyond the log and be extrapolated;
-  /// that only shifts the window by a frame or two, never the measurement.
-  func inputWindow(forOutputFrame outputFrame: Int64, prerollFrames: Int64, lengthFrames: Int64)
-    -> Range<Int64>
-  {
-    let host = output.hostTicks(forSample: Double(outputFrame))
-    let start = Int64(input.sample(forHostTicks: host).rounded(.down)) - prerollFrames
-    return start..<(start + prerollFrames + lengthFrames)
-  }
-
-  func hostPathFrames(outputFrame: Int64, inputSample: Double) -> Double {
-    ClockSelfTest.hostPathFrames(
-      outputSample: Double(outputFrame), inputSample: inputSample, output: output, input: input,
-      sampleRate: sampleRate, clock: clock)
   }
 }

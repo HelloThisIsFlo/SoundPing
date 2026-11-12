@@ -35,9 +35,11 @@ struct RunCommand: AsyncParsableCommand {
           if let progress = Self.progress(for: event) { Output.progressLine(progress) }
         } else {
           switch event {
+          case .probe(let probe): Output.writeLine(pretty.probeLine(probe))
+          case .levelLocked(let lock): Output.writeLine(pretty.lockLine(lock))
           case .armed(let info): Output.writeLine(pretty.armedLine(info))
           case .hit(let record), .rejected(let record): Output.writeLine(pretty.hitLine(record))
-          case .probe, .levelLocked, .aborted, .selfTest, .finished: break
+          case .aborted, .selfTest, .finished: break
           }
         }
         if case .finished(let result) = event { finished = result }
@@ -64,6 +66,14 @@ struct RunCommand: AsyncParsableCommand {
   /// A short stderr line per hit for a person watching a data-mode run.
   private static func progress(for event: RunEvent) -> String? {
     switch event {
+    case .probe(let probe):
+      return String(
+        format: "probe %.0f dBFS: confidence %.2f, peak %.1f dBFS", probe.levelDbfs,
+        probe.confidence, probe.peakDbfs)
+    case .levelLocked(let lock):
+      return String(
+        format: "level locked at %.0f dBFS (%@, ceiling %.0f dBFS)", lock.levelDbfs,
+        lock.listenerKind.rawValue, lock.ceilingDbfs)
     case .hit(let record):
       let frames = record.latencyFrames.map { String(format: "%.2f frames", $0) } ?? "-"
       return "hit \(record.index) (\(record.phase.rawValue)): \(frames)"

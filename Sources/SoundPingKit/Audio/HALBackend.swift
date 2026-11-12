@@ -41,6 +41,7 @@ public final class HALBackend: AudioBackend {
     var outputUID = ""
     var inputUID = ""
     var inputDeviceID = AudioDeviceID(kAudioObjectUnknown)
+    var outputDeviceID = AudioDeviceID(kAudioObjectUnknown)
     var reportedBuffer = 0
     var sampleRate = 0.0
     var gapsReported = 0
@@ -167,6 +168,7 @@ public final class HALBackend: AudioBackend {
       $0.outputUID = outInfo.uid
       $0.inputUID = inInfo.uid
       $0.inputDeviceID = inID
+      $0.outputDeviceID = outID
       $0.reportedBuffer = inBuffer
       $0.sampleRate = rate
       $0.stopped = false
@@ -357,6 +359,36 @@ public final class HALBackend: AudioBackend {
     case .notDetermined: return .notDetermined
     @unknown default: return .notDetermined
     }
+  }
+
+  /// Reads the three places an output can be silenced: the device's mute, its volume, and the
+  /// process mute the system can put on this process. Only reads; the user's volume stays theirs
+  /// (T-01-30). A device that does not implement a property reports nil for it.
+  public func outputMuteState() async -> MuteState {
+    let device = state.withLock { $0.outputDeviceID }
+    guard device != AudioDeviceID(kAudioObjectUnknown) else { return MuteState() }
+    let scope = kAudioObjectPropertyScopeOutput
+
+    let mute = HALProperty.get(device, kAudioDevicePropertyMute, scope: scope, initial: UInt32(0))
+    let processMute =
+      HALProperty.get(device, kAudioDevicePropertyProcessMute, scope: scope, initial: UInt32(0))
+      ?? HALProperty.get(device, kAudioDevicePropertyProcessMute, initial: UInt32(0))
+
+    // The main element when the device has one, else the loudest of the first two channels.
+    var volume = HALProperty.get(
+      device, kAudioDevicePropertyVolumeScalar, scope: scope, initial: Float32(0))
+    if volume == nil {
+      let channels = (1...2).compactMap { channel in
+        HALProperty.get(
+          device, kAudioDevicePropertyVolumeScalar, scope: scope,
+          element: AudioObjectPropertyElement(channel),
+          initial: Float32(0))
+      }
+      volume = channels.max()
+    }
+    return MuteState(
+      deviceMute: mute.map { $0 != 0 }, volumeScalar: volume,
+      processMute: processMute.map { $0 != 0 })
   }
 
   public func currentOutputFrame() async -> Int64 {
