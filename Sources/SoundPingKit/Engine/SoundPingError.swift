@@ -48,3 +48,32 @@ public struct SoundPingError: Error, Codable, Sendable, Equatable, CustomStringC
 
   public var description: String { "\(code): \(detail)" }
 }
+
+extension SoundPingError {
+  /// The error a device event stands for when it ends a run or a probe (ENG-07). An overload is
+  /// not one: the callers handle it by rejecting the hits it touched.
+  static func forDeviceEvent(_ event: DeviceEvent) -> SoundPingError {
+    switch event {
+    case .gone(let uid):
+      return .deviceChanged(
+        "deviceGone", "device '\(uid)' disappeared during the run", context: ["uid": uid])
+    case .sampleRateChanged(let uid, let from, let to):
+      return .deviceChanged(
+        "sampleRateChanged", "device '\(uid)' changed sample rate from \(from) to \(to) Hz",
+        context: ["uid": uid, "from": String(from), "to": String(to)])
+    case .bufferSizeChanged(let uid, let from, let to):
+      return .deviceChanged(
+        "bufferSizeChanged", "device '\(uid)' changed buffer size from \(from) to \(to) frames",
+        context: ["uid": uid, "from": String(from), "to": String(to)])
+    case .streamConfigChanged(let uid):
+      return .deviceChanged(
+        "streamConfigChanged", "device '\(uid)' changed its stream configuration",
+        context: ["uid": uid])
+    case .ioStopped(let uid):
+      return .deviceChanged(
+        "ioStopped", "device '\(uid)' stopped unexpectedly", context: ["uid": uid])
+    case .overload(let uid, _):
+      return .internalFailure("unexpectedOverload", "overload on '\(uid)' is not an abort")
+    }
+  }
+}

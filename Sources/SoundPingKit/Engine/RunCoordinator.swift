@@ -145,7 +145,7 @@ private struct Session: Sendable {
             monitor.recordOverload(atInputFrame: frame)
             continue
           }
-          throw Session.abortError(for: event)
+          throw SoundPingError.forDeviceEvent(event)
         }
         return .eventsEnded
       }
@@ -160,31 +160,6 @@ private struct Session: Sendable {
         }
       }
       throw SoundPingError.internalFailure("noResult", "the run ended without a result")
-    }
-  }
-
-  private static func abortError(for event: DeviceEvent) -> SoundPingError {
-    switch event {
-    case .gone(let uid):
-      return .deviceChanged(
-        "deviceGone", "device '\(uid)' disappeared during the run", context: ["uid": uid])
-    case .sampleRateChanged(let uid, let from, let to):
-      return .deviceChanged(
-        "sampleRateChanged", "device '\(uid)' changed sample rate from \(from) to \(to) Hz",
-        context: ["uid": uid, "from": String(from), "to": String(to)])
-    case .bufferSizeChanged(let uid, let from, let to):
-      return .deviceChanged(
-        "bufferSizeChanged", "device '\(uid)' changed buffer size from \(from) to \(to) frames",
-        context: ["uid": uid, "from": String(from), "to": String(to)])
-    case .streamConfigChanged(let uid):
-      return .deviceChanged(
-        "streamConfigChanged", "device '\(uid)' changed its stream configuration",
-        context: ["uid": uid])
-    case .ioStopped(let uid):
-      return .deviceChanged(
-        "ioStopped", "device '\(uid)' stopped unexpectedly", context: ["uid": uid])
-    case .overload(let uid, _):
-      return .internalFailure("unexpectedOverload", "overload on '\(uid)' is not an abort")
     }
   }
 

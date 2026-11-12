@@ -3,6 +3,43 @@ import Testing
 
 @testable import SoundPingKit
 
+/// Forwards to the simulator, announces a device change on the event stream during the first
+/// listening wait, and then never delivers the samples, like a device whose notification arrives
+/// while the probe waits.
+private actor ChangingDeviceBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private let continuation: AsyncStream<DeviceEvent>.Continuation
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario) {
+    inner = SimulatedBackend(scenario: scenario)
+    (events, continuation) = AsyncStream<DeviceEvent>.makeStream()
+  }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    try await inner.open(setup, templates: templates)
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    continuation.yield(
+      .sampleRateChanged(uid: SimulatedCatalog.scarlettUID, from: 48_000, to: 44_100))
+    while true { try await Task.sleep(for: .seconds(3600)) }
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    await inner.stamps(covering: range)
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async {
+    await inner.stop()
+    continuation.finish()
+  }
+}
+
 /// `--in-channel auto` (D-11): play the chirp, hear which input channel it comes back on, say how
 /// sure that is, and refuse to guess when two channels hear it about equally. It is a probe: it
 /// never writes a run and never measures.
@@ -31,6 +68,21 @@ import Testing
     } catch {
       return Probed(result: nil, error: error as? SoundPingError)
     }
+  }
+
+  @Test func aDeviceChangeWhileProbingEndsTheProbeWithTheMatchingError() async throws {
+    let backend = ChangingDeviceBackend(
+      scenario: Scenario(jitterFrames: 0, loopChannel: 7, seed: 3))
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: backend, setup: Self.setup, channels: Self.scarlett.input?.channels ?? [])
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    let error = try #require(thrown)
+    #expect(error.kind == .deviceChanged)
+    #expect(error.code == "sampleRateChanged")
   }
 
   @Test func theLoopChannelWinsWithHighConfidenceAndAClearMargin() async throws {

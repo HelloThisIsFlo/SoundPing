@@ -138,7 +138,7 @@ public struct ChannelProbe: Sendable {
           app = try await checks.checkPermission(on: backend).app
           try await checks.checkOutput(on: backend)
         }
-        let score = try await withDeadline {
+        let score = try await withDeadline(watching: backend) {
           try await Self.probe(
             channel: channel, ceiling: probeCeiling, nominal: nominal, info: info, setup: opened,
             backend: backend)
@@ -230,13 +230,26 @@ public struct ChannelProbe: Sendable {
     return Probed(score: best, heardSomething: heardSomething)
   }
 
-  /// A device that stops delivering audio would leave the wait for samples hanging; nobody is
-  /// listening to its events here, so a deadline per channel ends it.
-  private func withDeadline<T: Sendable>(_ work: @escaping @Sendable () async throws -> T)
-    async throws -> T
-  {
+  /// One channel's probe, raced against the backend's device events and a deadline. A sample-rate,
+  /// buffer, stream-layout or device change ends the probe with the matching `deviceChanged` error,
+  /// as it ends a run (IN-10): scores from before and after a change are never ranked together. An
+  /// overload is not a change; the glitched probe is rejected by the correlator. A device that
+  /// stops delivering audio altogether would leave the wait for samples hanging, so a deadline per
+  /// channel ends that too.
+  private func withDeadline<T: Sendable>(
+    watching backend: any AudioBackend, _ work: @escaping @Sendable () async throws -> T
+  ) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
       group.addTask { try await work() }
+      group.addTask {
+        for await event in backend.events {
+          if case .overload = event { continue }
+          throw SoundPingError.forDeviceEvent(event)
+        }
+        // The stream ended (the backend was stopped): nothing to report, wait to be cancelled.
+        try await Task.sleep(for: .seconds(24 * 3600))
+        throw CancellationError()
+      }
       group.addTask {
         try await Task.sleep(for: Self.channelDeadline)
         throw SoundPingError.deviceChanged(
