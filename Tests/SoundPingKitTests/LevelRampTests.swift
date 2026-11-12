@@ -519,6 +519,28 @@ import Testing
     #expect(!collected.tags.contains("armed"))
   }
 
+  @Test func aZeroFramePathIsHeardAndMeasuredInsteadOfFailingThePreflight() async throws {
+    // A software loop adds no converter latency: the chirp lands on the output frame itself.
+    let collected = try await Self.run(Scenario(latencyFrames: 0, jitterFrames: 0, seed: 4))
+    #expect(collected.error == nil, "\(String(describing: collected.error))")
+    let result = try #require(collected.result)
+    let path = try #require(result.measured.path)
+    #expect(path.valid == 20)
+    let median = try #require(path.median)
+    #expect(abs(median.frames) < 0.1, "\(median.frames)")
+  }
+
+  @Test func aNegativePathIsKeptAsMeasuredNotRejectedAsOutsideTheWindow() async throws {
+    // A driver that labels input a little early: the window reaches back before the output frame.
+    let collected = try await Self.run(Scenario(latencyFrames: -24, jitterFrames: 0, seed: 4))
+    #expect(collected.error == nil, "\(String(describing: collected.error))")
+    let result = try #require(collected.result)
+    #expect(result.rejectedCounts[RejectionReason.outsideWindow.rawValue] == 0)
+    let path = try #require(result.measured.path)
+    let median = try #require(path.median)
+    #expect(abs(median.frames - -24) < 0.1, "\(median.frames)")
+  }
+
   @Test func aBluetoothOutputRampsNoHigherThanTheHeadphoneCeiling() async throws {
     var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
     output.transport = "bluetooth"

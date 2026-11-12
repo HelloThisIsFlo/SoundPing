@@ -76,14 +76,18 @@ struct HitListener {
 
   mutating func listen(to hit: ScheduledHit, with correlator: Correlator) async throws -> Heard {
     // One device: output and input share their sample labels, so the stimulus is listened for
-    // from the frame it was played. Two devices: from where host time puts it on the input clock.
+    // from the frame it was played, less the same pre-roll. Without it a path of about zero
+    // frames (a software loop) peaks at lag 0, which the correlator rejects as outside the
+    // window. A driver that labels input slightly early gives a negative path, which is kept as
+    // measured. Two devices: from where host time puts it on the input clock.
     let range: Range<Int64>
     if let mapping {
       range = mapping.inputWindow(
         forOutputFrame: hit.outputFrame, prerollFrames: prerollFrames,
         lengthFrames: maxLatencyFrames + templateFrames)
     } else {
-      range = hit.outputFrame..<(hit.outputFrame + maxLatencyFrames + templateFrames)
+      let start = Swift.max(0, hit.outputFrame - prerollFrames)
+      range = start..<(hit.outputFrame + maxLatencyFrames + templateFrames)
     }
     try await backend.waitUntilCaptured(throughInputFrame: range.upperBound)
     if twoDevice { mapping = try HostMapping(log: await backend.stampLog(), info: info) }
