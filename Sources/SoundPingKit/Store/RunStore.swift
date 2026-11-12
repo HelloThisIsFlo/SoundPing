@@ -147,3 +147,16 @@ public struct RunStore: Sendable {
     }
   }
 }
+
+// RED-phase stubs: the API exists so the tests compile and fail on their assertions.
+extension RunStore {
+  public func acquiringRunLock() throws -> RunStore { self }
+
+  public func loadBytes(_ idOrPath: String) throws -> Data {
+    throw SoundPingError.internalFailure("notImplemented", "loadBytes")
+  }
+
+  public func load(_ idOrPath: String) throws -> RunResult {
+    throw SoundPingError.internalFailure("notImplemented", "load")
+  }
+}
