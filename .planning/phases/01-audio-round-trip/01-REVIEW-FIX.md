@@ -27,7 +27,9 @@ status: partial
 - **Hardware:** `just hw-test` and `just bench` were NOT run, and no sound was played. One hardware test was added for IN-09 and run against the real HAL on this Mac (MacBook Pro speakers and microphone, `open` and `stop` only, no IO started): it fails without the fix and passes with it. Everything else on the HAL side (IN-03 stream formats, IN-05 refused listeners, the real device classification behind CR-03 and WR-12) is covered by the simulator, unit tests of the pure logic, or not at all, so those entries are marked "requires human verification".
 - `.planning/config.json` and `.planning/state.json` were never staged.
 
-## Fixed Issues (iteration 3)
+## Fixed Issues
+
+**Iteration 3**
 
 ### CR-03: A virtual or "Loop" input overrides the headphone ceiling: the ramp can reach -6 dBFS in headphones (external: codex)
 
@@ -151,7 +153,7 @@ status: partial
 **Commit:** 4f097f8
 **Applied fix:** `defaults.templateId` is now explicitly `null`, next to a new `defaults.templateRule` ("follows the listener unless --template is given (chirp-loopback for a loop, chirp-speaker otherwise)"), so copying the advertised default into `--template` can no longer change behaviour. The `recipes --json` envelope is `schemaVersion` 2. The text listing says the rule too. This is a JSON contract change. The command's types are internal now so a test can encode them.
 
-## Fixed Issues (iterations 1 and 2)
+**Iterations 1 and 2**
 
 These 11 entries are kept as they were so the disposition ledger carries over. Notes on what iteration 3 changed about them are marked "Since:".
 
