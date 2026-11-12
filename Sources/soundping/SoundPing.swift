@@ -7,6 +7,6 @@ struct SoundPing: AsyncParsableCommand {
     commandName: "soundping",
     abstract: "Measure where the latency in your music setup comes from.",
     version: SoundPingInfo.version,
-    subcommands: [RunCommand.self, RunsCommand.self]
+    subcommands: [RunCommand.self, RunsCommand.self, DevicesCommand.self]
   )
 }
