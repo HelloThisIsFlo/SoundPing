@@ -48,12 +48,36 @@ result: [pending]
 expected: `just hw-test` on the Scarlett `Loop 1` round trip locks its level at or below -18 dBFS (the ceiling for an interface; no loop gets a louder one) without `--max-level`, and both runs produce valid hits
 result: [pending]
 
+### 9. Duplex round trip unchanged after the stamp redesign (code review WR-03, IN-08, WR-02, IN-13)
+expected: `just hw-test` on a duplex device: the I/O offset and appRoundTrip match a run recorded before quick task 261112-ql0 within one frame; `soundping selftest clock` passes with no self-test warning; run.json and the calibration/self-test records are all written
+result: [pending]
+
+### 10. Glitches are rejected, not measured (code review WR-01, IN-01, IN-16, IN-17, IN-18, IN-19)
+expected: Forcing overloads during a run (e.g. heavy CPU load or a tiny buffer) shows them as `discontinuity` rejections without shifting the median; the HAL 'over' notification lands inside the 20 ms margins; a glitched ramp or channel probe is replayed at the same level instead of climbing; an audio restart that resets the sample clock ends the run as `sampleClockReset`
+result: [pending]
+
+### 11. Two devices with different buffer sizes (code review WR-04, WR-05)
+expected: MacBook speakers → built-in mic: run.json records the output and input buffer sizes separately; a buffer that settles to a different size at start is adopted (no abort), and only a change after the first hit aborts; the first run after the update asks for one recalibration
+result: [pending]
+
+### 12. Headphones plugged or unplugged mid-run abort the run (code review WR-14, WR-15, jack follow-up ad6a7d6, IN-10)
+expected: Plugging or unplugging headphones on the built-in output during a run, and between channels during `--in-channel auto`, ends it with `outputRouteChanged` (data source or `jackIsConnected`) before anything plays at the wrong level; nothing aborts when nothing changes
+result: [pending]
+
+### 13. Loudness rule on real outputs (code review CR-02, CR-03, CR-04, CR-05, WR-08, WR-12, WR-13, WR-16)
+expected: AirPods/Bluetooth and the built-in headphone output never ramp above -30 dBFS, including with `--in-channel auto`, a virtual input, or `--listener speaker`/`loopback` (the run warns that `--listener` didn't raise it); a virtual output heard by a real mic stays at or below -18; only `--max-level` goes louder; a "nothing heard" error names the level actually played. Check what the Apple Silicon headphone output reports (`hdpn` vs other) and that built-in speakers report `ispk`
+result: [pending]
+
+### 14. Channel probe and setup reuse on real devices (code review WR-06, IN-03, IN-05, IN-09, IN-20, WR-07)
+expected: `--in-channel auto` on a multi-stream interface probes the right channels (every selected stream checked as Float32); "save channel to setup" only offers a setup bound to the probed devices; a probe followed by a run on the same backend works (fresh event stream); a refused HAL listener shows as a preflight warning; every failure appears as `.aborted` on the event stream
+result: [pending]
+
 ## Summary
 
-total: 8
+total: 14
 passed: 0
 issues: 0
-pending: 8
+pending: 14
 skipped: 0
 blocked: 0
 
