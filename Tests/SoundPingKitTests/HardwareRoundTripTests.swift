@@ -130,7 +130,9 @@ struct HardwareRoundTripTests {
         scheduleCapacity: 1, stampCapacity: 1))
     let (stream, sink) = AsyncStream<DeviceEvent>.makeStream()
     let listeners = DeviceListeners(
-      watching: [.init(id: id, uid: device.uid, bufferFrames: buffer)],
+      watching: [
+        .init(id: id, uid: device.uid, bufferFrames: buffer, captures: true, plays: true)
+      ],
       rate: device.nominalSampleRate, rt: rt, sink: sink)
     // Six per-device selectors (stream configuration once per direction) plus the system list.
     #expect(listeners.refused.load(ordering: .relaxed) == 0)

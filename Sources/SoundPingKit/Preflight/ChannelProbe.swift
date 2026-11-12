@@ -203,7 +203,7 @@ public struct ChannelProbe: Sendable {
     var listener = HitListener(
       backend: backend, info: info, templateFrames: Int64(template.samples.count),
       maxLatencyMs: RunParameters(seed: 0).maxLatencyMs,
-      twoDevice: setup.output.uid != setup.input.uid, monitor: nil)
+      twoDevice: setup.output.uid != setup.input.uid)
     try await listener.prepareClockMapping()
     var player = ProbePlayer(backend: backend, template: template)
 
@@ -233,9 +233,9 @@ public struct ChannelProbe: Sendable {
   /// One channel's probe, raced against the backend's device events and a deadline. A sample-rate,
   /// buffer, stream-layout or device change ends the probe with the matching `deviceChanged` error,
   /// as it ends a run (IN-10): scores from before and after a change are never ranked together. An
-  /// overload is not a change; the glitched probe is rejected by the correlator. A device that
-  /// stops delivering audio altogether would leave the wait for samples hanging, so a deadline per
-  /// channel ends that too.
+  /// overload is not an event: a glitched probe is rejected by its recorded fault interval. A device
+  /// that stops delivering audio altogether would leave the wait for samples hanging, so a deadline
+  /// per channel ends that too.
   private func withDeadline<T: Sendable>(
     watching backend: any AudioBackend, _ work: @escaping @Sendable () async throws -> T
   ) async throws -> T {
@@ -243,7 +243,6 @@ public struct ChannelProbe: Sendable {
       group.addTask { try await work() }
       group.addTask {
         for await event in backend.events {
-          if case .overload = event { continue }
           throw SoundPingError.forDeviceEvent(event)
         }
         // The stream ended (the backend was stopped): nothing to report, wait to be cancelled.

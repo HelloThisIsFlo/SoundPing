@@ -50,8 +50,7 @@ public struct SoundPingError: Error, Codable, Sendable, Equatable, CustomStringC
 }
 
 extension SoundPingError {
-  /// The error a device event stands for when it ends a run or a probe (ENG-07). An overload is
-  /// not one: the callers handle it by rejecting the hits it touched.
+  /// The error a device event stands for when it ends a run or a probe (ENG-07).
   static func forDeviceEvent(_ event: DeviceEvent) -> SoundPingError {
     switch event {
     case .gone(let uid):
@@ -72,8 +71,6 @@ extension SoundPingError {
     case .ioStopped(let uid):
       return .deviceChanged(
         "ioStopped", "device '\(uid)' stopped unexpectedly", context: ["uid": uid])
-    case .overload(let uid, _):
-      return .internalFailure("unexpectedOverload", "overload on '\(uid)' is not an abort")
     }
   }
 }

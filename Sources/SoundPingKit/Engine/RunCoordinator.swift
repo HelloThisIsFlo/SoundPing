@@ -136,22 +136,14 @@ private struct Session: Sendable {
   private func supervise(info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate])
     async throws -> RunResult
   {
-    let monitor = FaultMonitor()
     let backend = self.backend
     return try await withThrowingTaskGroup(of: Outcome.self) { group in
       group.addTask {
-        for await event in backend.events {
-          if case .overload(_, let frame) = event {
-            monitor.recordOverload(atInputFrame: frame)
-            continue
-          }
-          throw SoundPingError.forDeviceEvent(event)
-        }
+        for await event in backend.events { throw SoundPingError.forDeviceEvent(event) }
         return .eventsEnded
       }
       group.addTask {
-        .measured(
-          try await measure(info: info, plan: plan, nominals: nominals, monitor: monitor))
+        .measured(try await measure(info: info, plan: plan, nominals: nominals))
       }
       while let outcome = try await group.next() {
         if case .measured(let result) = outcome {
@@ -164,7 +156,7 @@ private struct Session: Sendable {
   }
 
   private func measure(
-    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate], monitor: FaultMonitor
+    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate]
   ) async throws -> RunResult {
     // The folder exists before `armed` is announced, so the run id on the stream is the final one,
     // collision suffix included. A run that dies before run.json is written takes its empty folder along.
@@ -173,7 +165,7 @@ private struct Session: Sendable {
       recipeId: request.recipe.id, label: request.label, createdAt: createdAt)
     do {
       return try await measure(
-        info: info, plan: plan, nominals: nominals, monitor: monitor, folder: folder,
+        info: info, plan: plan, nominals: nominals, folder: folder,
         createdAt: createdAt)
     } catch {
       Self.removeIfEmpty(folder)
@@ -187,7 +179,7 @@ private struct Session: Sendable {
   }
 
   private func measure(
-    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate], monitor: FaultMonitor,
+    info: BackendInfo, plan: PreflightPlan, nominals: [StimulusTemplate],
     folder: URL, createdAt: Date
   ) async throws -> RunResult {
     var parameters = request.parameters
@@ -212,7 +204,7 @@ private struct Session: Sendable {
     var listener = HitListener(
       backend: backend, info: info, templateFrames: Int64(template.samples.count),
       maxLatencyMs: parameters.maxLatencyMs,
-      twoDevice: request.setup.output.uid != request.setup.input.uid, monitor: monitor)
+      twoDevice: request.setup.output.uid != request.setup.input.uid)
     try await listener.prepareClockMapping()
 
     // The third check: find the level, then lock it for every warm-up and measured hit (D-14).

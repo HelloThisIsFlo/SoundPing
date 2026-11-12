@@ -1,20 +1,5 @@
 import Accelerate
 import Foundation
-import Synchronization
-
-/// Input frames an audio-thread overload touched, written by the device-event listener and read
-/// by the measuring loop.
-final class FaultMonitor: Sendable {
-  private let overloads = Mutex<[Int64]>([])
-
-  func recordOverload(atInputFrame frame: Int64) {
-    overloads.withLock { $0.append(frame) }
-  }
-
-  func hasOverload(in range: Range<Int64>) -> Bool {
-    overloads.withLock { $0.contains(where: range.contains) }
-  }
-}
 
 /// Listens for one scheduled hit: finds its input window, waits for the samples, and runs a
 /// correlator over them. Warm-ups, measured hits, level probes and the channel probe all hear
@@ -23,7 +8,6 @@ struct HitListener {
   let backend: any AudioBackend
   let info: BackendInfo
   let twoDevice: Bool
-  let monitor: FaultMonitor?
   private let templateFrames: Int64
   private let maxLatencyFrames: Int64
   private let prerollFrames: Int64
@@ -34,15 +18,19 @@ struct HitListener {
   static let windowPrerollMs = 5.0
   /// Callbacks that must be on record before two devices' clocks are fitted: the fit uses 33.
   static let mappingWarmupCallbacks = 2 * DeviceTimeline.halfWindow + 8
+  /// How long past the end of a window the listener waits before it asks for faults, so an HAL
+  /// 'over' notification that arrives a little after its glitch lands before the window is judged.
+  /// It must stay well below `HitScheduler.spacingMarginMs` (50): the wait may not reach the next
+  /// hit. Best effort; how late the HAL really notifies needs hardware to know.
+  static let faultSettleMs = 20.0
 
   init(
     backend: any AudioBackend, info: BackendInfo, templateFrames: Int64, maxLatencyMs: Double,
-    twoDevice: Bool, monitor: FaultMonitor?
+    twoDevice: Bool
   ) {
     self.backend = backend
     self.info = info
     self.twoDevice = twoDevice
-    self.monitor = monitor
     self.templateFrames = templateFrames
     self.maxLatencyFrames = Int64((maxLatencyMs / 1000 * info.sampleRate).rounded(.up))
     self.prerollFrames = Int64((Self.windowPrerollMs / 1000 * info.sampleRate).rounded(.up))
@@ -56,10 +44,10 @@ struct HitListener {
     var latencyFrames: Double?
     /// Loudest input sample of the window, 0 when nothing was captured.
     var peakAbs: Float
-    /// Frames of the window. 0 when an overload kept it from being read.
+    /// Frames of the window. 0 when a recorded fault kept it from being read.
     var capturedFrames: Int
-    /// An audio-thread overload touched the window, so it was not read.
-    var overloaded = false
+    /// A recorded fault interval overlaps the window or the played chirp, so the window was not read.
+    var faulted = false
   }
 
   /// Two devices count their samples separately, so a hit's input window is found through host
@@ -89,12 +77,17 @@ struct HitListener {
       let start = Swift.max(0, hit.outputFrame - prerollFrames)
       range = start..<(hit.outputFrame + maxLatencyFrames + templateFrames)
     }
-    try await backend.waitUntilCaptured(throughInputFrame: range.upperBound)
+    let settleFrames = Int64((Self.faultSettleMs / 1000 * info.sampleRate).rounded(.up))
+    try await backend.waitUntilCaptured(throughInputFrame: range.upperBound + settleFrames)
     if twoDevice { mapping = try HostMapping(log: await backend.stampLog(), info: info) }
 
-    if monitor?.hasOverload(in: range) == true {
+    // Asked of the backend directly, after the window is captured: the record is complete below
+    // the frames just waited for, and no event-stream hop sits between a glitch and this check
+    // (WR-01). The chirp's own output frames count too: a glitch while it played changed it.
+    let playedFrames = hit.outputFrame..<(hit.outputFrame + templateFrames)
+    if !(await backend.faults(overlappingInput: range, output: playedFrames)).isEmpty {
       return Heard(
-        detection: .rejected(.discontinuity), peakAbs: 0, capturedFrames: 0, overloaded: true)
+        detection: .rejected(.discontinuity), peakAbs: 0, capturedFrames: 0, faulted: true)
     }
     let window = try await backend.capture(range)
     let stamps = await backend.stamps(covering: range)

@@ -37,12 +37,39 @@ public struct CallbackStamp: Codable, Sendable, Equatable {
   }
 }
 
+/// A glitch the audio thread suffered: frames of one direction that did not arrive or were not
+/// played as scheduled, or that cannot be timestamped. The hits whose input window or played chirp
+/// touch it are rejected (WR-01).
+public struct FaultInterval: Sendable, Equatable {
+  /// Whose label space `frames` are in. An input device and an output device count separately.
+  public enum Direction: Sendable, Equatable { case input, output }
+  public enum Cause: Sendable, Equatable {
+    /// The sample time jumped: frames never arrived (or went back).
+    case lostFrames
+    /// The callback carried no valid host time, so it cannot be placed on the host clock.
+    case invalidTimestamp
+    /// The HAL announced a processor overload around these frames.
+    case overload
+    /// The fault record wrapped and forgot the frames asked about: unknown, so treated as faulty.
+    case logOverwritten
+  }
+
+  public var direction: Direction
+  public var frames: Range<Int64>
+  public var cause: Cause
+
+  public init(direction: Direction, frames: Range<Int64>, cause: Cause) {
+    self.direction = direction
+    self.frames = frames
+    self.cause = cause
+  }
+}
+
 public enum DeviceEvent: Sendable, Equatable {
   case gone(uid: String)
   case sampleRateChanged(uid: String, from: Double, to: Double)
   case bufferSizeChanged(uid: String, from: Int, to: Int)
   case streamConfigChanged(uid: String)
-  case overload(uid: String, atInputFrame: Int64)
   case ioStopped(uid: String)
 }
 
@@ -111,6 +138,13 @@ public protocol AudioBackend: AnyObject, Sendable {
   /// Every callback's timestamps so far, one entry per callback per direction. The self-test and
   /// two-device runs build their per-direction timelines from this (CAL-03).
   func stampLog() async -> StampLog
+  /// Every recorded fault whose frames overlap `input` (input faults, in input labels) or `output`
+  /// (output faults, in output labels). The test is overlap, never containment: a fault that
+  /// touches one frame of a range is returned. The answer is complete for input frames below the
+  /// last `waitUntilCaptured` target and for output frames the output device has already played;
+  /// a record that wrapped answers with a `logOverwritten` fault rather than silence. There is no
+  /// default: an empty answer would fail open, so every backend must say what it knows.
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async -> [FaultInterval]
   /// The HAL's own host time for an input sample (`AudioDeviceTranslateTime`), used as a diagnostic
   /// third opinion next to our timeline. Nil when the backend has no such service; the simulator
   /// always returns nil.

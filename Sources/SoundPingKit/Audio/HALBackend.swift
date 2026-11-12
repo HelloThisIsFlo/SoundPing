@@ -51,7 +51,6 @@ public final class HALBackend: AudioBackend {
     /// devices settled on once IO started.
     var info: BackendInfo?
     var sampleRate = 0.0
-    var gapsReported = 0
     var stallReported = false
     var stopped = false
     var listeners: DeviceListeners?
@@ -69,7 +68,6 @@ public final class HALBackend: AudioBackend {
         (eventStream, eventSink) = AsyncStream<DeviceEvent>.makeStream()
       }
       stopped = false
-      gapsReported = 0
       stallReported = false
     }
   }
@@ -178,10 +176,14 @@ public final class HALBackend: AudioBackend {
 
     // Listening starts once the buffer sizes are settled, so SoundPing's own change is not news.
     var watched = [
-      DeviceListeners.Watched(id: outID, uid: outInfo.uid, bufferFrames: outBuffer)
+      DeviceListeners.Watched(
+        id: outID, uid: outInfo.uid, bufferFrames: outBuffer, captures: outID == inID,
+        plays: true)
     ]
     if inID != outID {
-      watched.append(DeviceListeners.Watched(id: inID, uid: inInfo.uid, bufferFrames: inBuffer))
+      watched.append(
+        DeviceListeners.Watched(
+          id: inID, uid: inInfo.uid, bufferFrames: inBuffer, captures: true, plays: false))
     }
     let listeners = DeviceListeners(watching: watched, rate: rate, rt: rt, sink: eventSink)
 
@@ -498,7 +500,6 @@ public final class HALBackend: AudioBackend {
     var lastProgress = clock.now
     while true {
       let next = rt.inputNextLabel.load(ordering: .acquiring)
-      surfaceGaps(rt)
       if Int64(next) >= target { return }
       if next != lastNext {
         lastNext = next
@@ -507,21 +508,6 @@ public final class HALBackend: AudioBackend {
         reportStall()
       }
       try await Task.sleep(for: Self.pollInterval)
-    }
-  }
-
-  /// A sample-time discontinuity the audio thread noticed becomes an overload event. The hits whose
-  /// windows it touches are rejected by the coordinator; the run goes on (ENG-07).
-  private func surfaceGaps(_ rt: RTState) {
-    let count = rt.gapCount.load(ordering: .acquiring)
-    let (reported, uid) = state.withLock { state -> (Int, String) in
-      let previous = state.gapsReported
-      state.gapsReported = Swift.max(previous, count)
-      return (previous, state.inputUID)
-    }
-    if count > reported {
-      eventSink.yield(
-        .overload(uid: uid, atInputFrame: Int64(rt.lastGapLabel.load(ordering: .relaxed))))
     }
   }
 
@@ -546,6 +532,13 @@ public final class HALBackend: AudioBackend {
   public func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
     guard let rt = state.withLock({ $0.rt }), !range.isEmpty else { return [] }
     return rt.callbackStamps(covering: range)
+  }
+
+  public func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async
+    -> [FaultInterval]
+  {
+    guard let rt = state.withLock({ $0.rt }) else { return [] }
+    return rt.faults(overlappingInput: input, output: output)
   }
 
   public func stampLog() async -> StampLog {

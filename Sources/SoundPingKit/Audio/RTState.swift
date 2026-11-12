@@ -138,6 +138,61 @@ struct StampRing: ~Copyable, Sendable {
   }
 }
 
+/// A fixed-size ring of fault intervals, each a range of sample labels of one direction and a cause
+/// code. Same discipline as `StampRing`: one writer, preallocated, never resized, the count
+/// published with a releasing store after the entry. Entries are appended in the order the writer
+/// found them, never merged: two glitches stay two intervals (WR-01).
+struct FaultRing: ~Copyable, Sendable {
+  let capacity: Int
+  nonisolated(unsafe) private let lowers: UnsafeMutablePointer<Int>
+  nonisolated(unsafe) private let uppers: UnsafeMutablePointer<Int>
+  nonisolated(unsafe) private let causes: UnsafeMutablePointer<Int>
+  private let written = Atomic<Int>(0)
+
+  init(capacity: Int) {
+    self.capacity = Swift.max(1, capacity)
+    lowers = .allocate(capacity: self.capacity)
+    lowers.initialize(repeating: 0, count: self.capacity)
+    uppers = .allocate(capacity: self.capacity)
+    uppers.initialize(repeating: 0, count: self.capacity)
+    causes = .allocate(capacity: self.capacity)
+    causes.initialize(repeating: 0, count: self.capacity)
+  }
+
+  deinit {
+    lowers.deallocate()
+    uppers.deallocate()
+    causes.deallocate()
+  }
+
+  /// Faults recorded so far (not capped by the capacity).
+  var count: Int { written.load(ordering: .acquiring) }
+
+  /// Real-time side. No allocation, no locks. Callers pass `upper > lower`.
+  @_noLocks
+  func append(lower: Int, upper: Int, cause: Int) {
+    let n = written.load(ordering: .relaxed)
+    let i = n % capacity
+    lowers[i] = lower
+    uppers[i] = upper
+    causes[i] = cause
+    written.store(n + 1, ordering: .releasing)
+  }
+
+  /// Every retained fault, oldest first, and whether older ones were overwritten.
+  func retained() -> (entries: [(lower: Int, upper: Int, cause: Int)], wrapped: Bool) {
+    let n = written.load(ordering: .acquiring)
+    let first = Swift.max(0, n - capacity)
+    var entries: [(lower: Int, upper: Int, cause: Int)] = []
+    entries.reserveCapacity(n - first)
+    for ordinal in first..<n {
+      let i = ordinal % capacity
+      entries.append((lowers[i], uppers[i], causes[i]))
+    }
+    return (entries, first > 0)
+  }
+}
+
 /// Everything the audio thread and the engine share, allocated once before the device starts and
 /// never resized. The IOProc only writes capture data, stamps and its own cursors, with releasing
 /// stores; the engine only reads them with acquiring loads and appends to the schedule ring.
@@ -158,6 +213,9 @@ final class RTState: Sendable {
     /// One device plays and captures (a duplex interface): its callbacks carry both directions in
     /// one ring entry. False when an input device and a separate output device each write a ring.
     var sharedDevice = true
+    /// Fault intervals each of the four fault rings holds. A ring that wraps answers queries below
+    /// its oldest entry with a `logOverwritten` fault, so overflow rejects hits instead of passing them.
+    var faultCapacity = 4096
   }
 
   // MARK: Layout of an AudioBufferList (computed once, read by the IOProc)
@@ -176,9 +234,6 @@ final class RTState: Sendable {
   /// Label of the next frame to be captured.
   let inputNextLabel = Atomic<Int>(0)
   let inputStarted = Atomic<Bool>(false)
-  /// Sample-time discontinuities seen so far, and where the latest one began (the first missing label).
-  let gapCount = Atomic<Int>(0)
-  let lastGapLabel = Atomic<Int>(0)
 
   // MARK: Output
 
@@ -195,6 +250,17 @@ final class RTState: Sendable {
   /// Written only by a separate output device on a two-device run; its entries carry the output side.
   let outputDeviceStamps: StampRing
   let sharedDevice: Bool
+
+  // MARK: Faults, one single-writer ring per direction and per writer
+
+  /// Written by the IOProc of the input direction: lost frames and untimestamped input callbacks.
+  let inputFaults: FaultRing
+  /// Written by the IOProc of the output direction. On a shared device the same IOProc writes this
+  /// ring and `inputFaults`, which is fine: each ring has exactly one writer thread.
+  let outputFaults: FaultRing
+  /// Written only from `DeviceListeners`' serial queue, by `noteOverload`.
+  let inputOverloads: FaultRing
+  let outputOverloads: FaultRing
 
   // MARK: Schedule ring (single producer: the engine; single consumer: the IOProc)
 
@@ -232,7 +298,12 @@ final class RTState: Sendable {
     sharedDevice = configuration.sharedDevice
     inputDeviceStamps = StampRing(capacity: configuration.stampCapacity)
     // On a shared device nothing writes the second ring, so it stays minimal.
-    outputDeviceStamps = StampRing(capacity: configuration.sharedDevice ? 1 : configuration.stampCapacity)
+    outputDeviceStamps = StampRing(
+      capacity: configuration.sharedDevice ? 1 : configuration.stampCapacity)
+    inputFaults = FaultRing(capacity: configuration.faultCapacity)
+    outputFaults = FaultRing(capacity: configuration.faultCapacity)
+    inputOverloads = FaultRing(capacity: configuration.faultCapacity)
+    outputOverloads = FaultRing(capacity: configuration.faultCapacity)
 
     scheduleCapacity = configuration.scheduleCapacity
     schedule = .allocate(capacity: scheduleCapacity)
@@ -373,5 +444,86 @@ final class RTState: Sendable {
     return StampLog(
       input: inputEntries.compactMap(\.input), output: outputEntries.compactMap(\.output),
       ioOffsetFrames: offsets)
+  }
+
+  // MARK: Faults
+
+  /// Records an HAL processor-overload notification as an interval of `onInput`'s and/or
+  /// `onOutput`'s label space: `lookbackFrames` before the direction's next label (the buffer the
+  /// notification is about, plus the latency of the notification itself) up to the end of the
+  /// buffer in flight, `bufferFrames` after it. An output device's overload lands in output labels,
+  /// never on the input position (WR-01).
+  ///
+  /// May only be called from the listeners' serial queue: the two overload rings have that queue as
+  /// their single writer.
+  func noteOverload(onInput: Bool, onOutput: Bool, lookbackFrames: Int, bufferFrames: Int) {
+    if onInput {
+      let next = inputNextLabel.load(ordering: .acquiring)
+      inputOverloads.append(
+        lower: next - lookbackFrames, upper: next + Swift.max(1, bufferFrames),
+        cause: faultOverloadCode)
+    }
+    if onOutput {
+      let next = outputNextLabel.load(ordering: .acquiring)
+      outputOverloads.append(
+        lower: next - lookbackFrames, upper: next + Swift.max(1, bufferFrames),
+        cause: faultOverloadCode)
+    }
+  }
+
+  /// Every recorded fault that overlaps `input` (input faults) or `output` (output faults).
+  ///
+  /// The labels are loaded first, with acquiring loads: the IOProc appends a fault before the label
+  /// store that follows it, so every fault below those labels is visible by the time the rings are
+  /// read. Intervals are tested for overlap, not containment, and never merged.
+  ///
+  /// A ring that has overwritten old entries no longer knows what happened below its oldest one. A
+  /// query that reaches below it gets one `logOverwritten` fault for that stretch, so overflow
+  /// rejects a hit instead of letting it through.
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) -> [FaultInterval] {
+    _ = inputNextLabel.load(ordering: .acquiring)
+    _ = outputNextLabel.load(ordering: .acquiring)
+    var found = Self.scan(
+      inputFaults, inputOverloads, direction: .input, overlapping: input)
+    found += Self.scan(
+      outputFaults, outputOverloads, direction: .output, overlapping: output)
+    return found
+  }
+
+  private static func scan(
+    _ writtenByIOProc: borrowing FaultRing, _ writtenByListeners: borrowing FaultRing,
+    direction: FaultInterval.Direction, overlapping query: Range<Int64>
+  ) -> [FaultInterval] {
+    guard !query.isEmpty else { return [] }
+    var found: [FaultInterval] = []
+    var forgottenBelow: Int64?
+    let first = writtenByIOProc.retained()
+    let second = writtenByListeners.retained()
+    for (entries, wrapped) in [(first.entries, first.wrapped), (second.entries, second.wrapped)] {
+      for entry in entries {
+        let range = Int64(entry.lower)..<Int64(Swift.max(entry.upper, entry.lower + 1))
+        guard range.lowerBound < query.upperBound, range.upperBound > query.lowerBound else {
+          continue
+        }
+        let cause: FaultInterval.Cause
+        switch entry.cause {
+        case faultLostFramesCode: cause = .lostFrames
+        case faultInvalidTimestampCode: cause = .invalidTimestamp
+        default: cause = .overload
+        }
+        found.append(FaultInterval(direction: direction, frames: range, cause: cause))
+      }
+      if wrapped, let oldest = entries.map({ Int64($0.lower) }).min(),
+        query.lowerBound < oldest
+      {
+        forgottenBelow = Swift.max(forgottenBelow ?? oldest, oldest)
+      }
+    }
+    if let forgottenBelow {
+      found.append(
+        FaultInterval(
+          direction: direction, frames: query.lowerBound..<forgottenBelow, cause: .logOverwritten))
+    }
+    return found
   }
 }

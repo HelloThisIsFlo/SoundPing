@@ -44,6 +44,13 @@ struct StampSide: Sendable, Equatable {
   }
 }
 
+// Cause codes a fault ring stores; `RTState.faults` maps them back to `FaultInterval.Cause`. Plain
+// module-level constants, because a static property read from another file is a function call the
+// `@_noLocks` check cannot see into.
+let faultLostFramesCode = 0
+let faultInvalidTimestampCode = 1
+let faultOverloadCode = 2
+
 /// What one direction of one callback leaves behind: the stamp it may log (absent when the callback
 /// could not be timestamped), and where the label stands afterwards. The label is published by
 /// `ioCycle`, after the stamp, so a reader that sees the new label also finds the callback's stamp.
@@ -86,8 +93,8 @@ func ioCycle(
 
 /// Captures the selected input channel into the capture ring at its sample label. A label that is
 /// not where the previous callback left off (beyond half a frame, compared in Double) counts as a
-/// discontinuity: the gap is zero-filled, counted, and remembered for the engine, which rejects
-/// every hit whose window touches it (ENG-07).
+/// discontinuity: the gap is zero-filled and recorded as its own fault interval, which the engine
+/// reads to reject every hit whose window it overlaps (ENG-07, WR-01).
 ///
 /// A callback whose time lacks `sampleTimeValid` is not captured at all (IN-08): its frames show up
 /// as a gap at the next valid callback. One without `hostTimeValid` is captured but yields no
@@ -124,10 +131,12 @@ private func captureSide(
   } else {
     let expected = rt.inputNextLabel.load(ordering: .relaxed)
     if abs(sampleTime - Double(expected)) > 0.5 {
-      rt.lastGapLabel.store(expected, ordering: .relaxed)
-      rt.gapCount.wrappingAdd(1, ordering: .releasing)
-      // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
+      // Frames that never arrived (or arrived twice) are recorded as their own interval, in input
+      // labels, before the label that follows them is published (WR-01).
       if label > expected {
+        rt.inputFaults.append(
+          lower: expected, upper: label, cause: faultLostFramesCode)
+        // Frames that never arrived read as silence, not as whatever the ring held a lap ago.
         let missing = Swift.min(label - expected, capacity)
         var position = (label - missing - first) % capacity
         if position < 0 { position += capacity }
@@ -138,6 +147,9 @@ private func captureSide(
           if position == capacity { position = 0 }
           filled += 1
         }
+      } else {
+        rt.inputFaults.append(
+          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
       }
     }
   }
@@ -159,6 +171,10 @@ private func captureSide(
     side.point = StampSide(
       sampleTime: sampleTime, hostTime: time.pointee.mHostTime,
       rateScalar: flags & rateScalarValidBit != 0 ? time.pointee.mRateScalar : 0, frames: frames)
+  } else {
+    // Its audio is kept, but no hit is measured across a callback that cannot be timestamped (IN-08).
+    rt.inputFaults.append(
+      lower: label, upper: label + frames, cause: faultInvalidTimestampCode)
   }
   return side
 }
@@ -204,12 +220,30 @@ private func playSide(
   let frames = Int(head.mDataByteSize) / (headChannels * bytesPerSample)
   guard frames > 0 else { return side }
 
+  // The output direction has the same continuity rule as the input: a label that is not where the
+  // previous callback left off means frames were skipped or repeated, and a chirp that was playing
+  // across them is not the chirp that was scheduled (WR-01).
+  if rt.outputStarted.load(ordering: .relaxed) {
+    let expected = rt.outputNextLabel.load(ordering: .relaxed)
+    if abs(sampleTime - Double(expected)) > 0.5 {
+      if label > expected {
+        rt.outputFaults.append(lower: expected, upper: label, cause: faultLostFramesCode)
+      } else {
+        rt.outputFaults.append(
+          lower: label, upper: Swift.max(expected, label + 1), cause: faultLostFramesCode)
+      }
+    }
+  }
+
   side.nextLabel = label + frames
   side.advanced = true
   if flags & hostTimeValidBit != 0 {
     side.point = StampSide(
       sampleTime: sampleTime, hostTime: time.pointee.mHostTime,
       rateScalar: flags & rateScalarValidBit != 0 ? time.pointee.mRateScalar : 0, frames: frames)
+  } else {
+    rt.outputFaults.append(
+      lower: label, upper: label + frames, cause: faultInvalidTimestampCode)
   }
 
   // Entries before the cursor have finished playing. Hits are ascending, so the scan stops at the

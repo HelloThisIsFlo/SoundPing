@@ -6,7 +6,7 @@ import Testing
 
 /// A hand-built AudioBufferList with interleaved Float32 buffers, like the one the HAL passes to
 /// an IOProc. Owns its memory.
-private final class SyntheticBuffers {
+final class SyntheticBuffers {
   let list: UnsafeMutableAudioBufferListPointer
   let frames: Int
   let widths: [Int]
@@ -41,7 +41,7 @@ private final class SyntheticBuffers {
   }
 }
 
-private func timeStamp(
+func timeStamp(
   sample: Double, host: UInt64 = 1, rate: Double = 1,
   flags: AudioTimeStampFlags = [.sampleTimeValid, .hostTimeValid, .rateScalarValid]
 ) -> AudioTimeStamp {
@@ -55,7 +55,7 @@ private func timeStamp(
 
 /// One IOProc callback over buffer lists of the `[2, 4]` channel layout, called the way the HAL
 /// block calls `ioCycle`. A direction a test does not care about gets a scratch list.
-private func cycle(
+func cycle(
   _ rt: RTState, captures: Bool = true, plays: Bool = true, hasInputs: Bool = true,
   hasOutputs: Bool = true, input: SyntheticBuffers? = nil, inputTime: AudioTimeStamp,
   output: SyntheticBuffers? = nil, outputTime: AudioTimeStamp
@@ -71,14 +71,14 @@ private func cycle(
 }
 
 /// An input-only callback, as a separate input device runs it.
-private func captureCycle(_ rt: RTState, _ input: SyntheticBuffers, _ time: AudioTimeStamp) {
+func captureCycle(_ rt: RTState, _ input: SyntheticBuffers, _ time: AudioTimeStamp) {
   cycle(
     rt, captures: true, plays: false, hasOutputs: false, input: input, inputTime: time,
     outputTime: time)
 }
 
 /// An output-only callback, as a separate output device runs it.
-private func playCycle(
+func playCycle(
   _ rt: RTState, _ output: SyntheticBuffers, _ time: AudioTimeStamp, isOutputDevice: Bool = true
 ) {
   cycle(
@@ -251,7 +251,7 @@ private func scope(streams: [Int]) -> ScopeInfo {
     #expect(captured == (5000..<5032).map { Float($0) })
     #expect(rt.inputFirstLabel.load(ordering: .relaxed) == 5000)
     #expect(rt.inputNextLabel.load(ordering: .relaxed) == 5032)
-    #expect(rt.gapCount.load(ordering: .relaxed) == 0)
+    #expect(Self.everyFault(rt).isEmpty)
 
     // Reading a middle slice, and the stamps that overlap it.
     #expect(try rt.readCapture(5010..<5020) == (5010..<5020).map { Float($0) })
@@ -275,17 +275,24 @@ private func scope(streams: [Int]) -> ScopeInfo {
     #expect(rt.stampLog().input == [point])
   }
 
-  @Test func aSixtyFourFrameJumpOfTheLabelSetsTheGapFlagAndLeavesSilence() throws {
+  /// Every fault the state has recorded, whatever the direction.
+  private static func everyFault(_ rt: RTState) -> [FaultInterval] {
+    rt.faults(overlappingInput: -1_000_000..<10_000_000, output: -1_000_000..<10_000_000)
+  }
+
+  @Test func aSixtyFourFrameJumpOfTheLabelIsOneInputFaultAndLeavesSilence() throws {
     let rt = try Self.makeState()
     let loud = SyntheticBuffers(widths: [2, 4], frames: 16, fill: 0.25)
     let t1 = timeStamp(sample: 5000)
     let t2 = timeStamp(sample: 5080)  // 5016 + 64: the next callback arrives 64 frames late
     captureCycle(rt, loud, t1)
-    #expect(rt.gapCount.load(ordering: .relaxed) == 0)
+    #expect(Self.everyFault(rt).isEmpty)
     captureCycle(rt, loud, t2)
 
-    #expect(rt.gapCount.load(ordering: .relaxed) == 1)
-    #expect(rt.lastGapLabel.load(ordering: .relaxed) == 5016)
+    // The missing frames are one interval, in input labels: [expected, label).
+    #expect(
+      Self.everyFault(rt)
+        == [FaultInterval(direction: .input, frames: 5016..<5080, cause: .lostFrames)])
     let captured = try rt.readCapture(5000..<5096)
     #expect(captured[0..<16].allSatisfy { $0 == 0.25 })
     #expect(captured[16..<80].allSatisfy { $0 == 0 })
@@ -301,7 +308,7 @@ private func scope(streams: [Int]) -> ScopeInfo {
       let t2 = timeStamp(sample: 9016 + offset)
       captureCycle(rt, input, t1)
       captureCycle(rt, input, t2)
-      #expect(rt.gapCount.load(ordering: .relaxed) == gaps, "offset \(offset)")
+      #expect(Self.everyFault(rt).count == gaps, "offset \(offset)")
     }
   }
 
