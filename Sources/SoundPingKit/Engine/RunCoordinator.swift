@@ -45,10 +45,12 @@ private enum Outcome: Sendable {
 /// hear the sound, how loud it may get and which chirp it is.
 private struct PreflightPlan: Sendable {
   var permission: Preflight.PermissionOutcome
-  var listener: ListenerKind
-  var ceilingDbfs: Double
+  var loudness: LevelRamp.Loudness
   var templateId: String
   var warnings: [String]
+
+  var listener: ListenerKind { loudness.kind }
+  var ceilingDbfs: Double { loudness.ceilingDbfs }
 }
 
 /// The level the ramp settled on, with the probes that got there.
@@ -118,18 +120,18 @@ private struct Session: Sendable {
     let checks = Preflight(resolver: resolver)
     let permission = try await checks.checkPermission(on: backend)
     try await checks.checkOutput(on: backend)
-    let listener =
-      request.preflight.listener
-      ?? LevelRamp.classify(
-        setup: request.setup, output: info.outputDevice, input: info.inputDevice)
-    let ceiling = try LevelRamp.resolveCeiling(
-      kind: listener, maxLevelDbfs: request.preflight.maxLevelDbfs)
+    // The one loudness model (LevelRamp.classify): the devices set the ceiling, --listener can only
+    // lower it, --max-level replaces it. A headphone output stays at -30 dBFS whatever --listener says.
+    let loudness = try LevelRamp.runLoudness(
+      setup: request.setup, output: info.outputDevice, input: info.inputDevice,
+      options: request.preflight)
     let templateId =
       request.preflight.templateFollowsListener
-      ? LevelRamp.templateId(for: listener) : request.parameters.templateId
+      ? LevelRamp.templateId(for: loudness.kind) : request.parameters.templateId
+    var warnings = info.warnings
+    if let note = loudness.listenerNotRaisedWarning { warnings.append(note) }
     return PreflightPlan(
-      permission: permission, listener: listener, ceilingDbfs: ceiling, templateId: templateId,
-      warnings: info.warnings)
+      permission: permission, loudness: loudness, templateId: templateId, warnings: warnings)
   }
 
   /// Measures while listening for device events; a device change aborts the run (ENG-07).
@@ -280,8 +282,8 @@ private struct Session: Sendable {
       warnings.append(
         String(
           format:
-            "--level %.0f dBFS is above the %.0f dBFS ceiling for a %@ listener, so %.0f dBFS is used; pass --max-level to raise the ceiling",
-          fixed, plan.ceilingDbfs, plan.listener.rawValue, plan.ceilingDbfs))
+            "--level %.0f dBFS is above the %.0f dBFS ceiling (%@), so %.0f dBFS is used; only --max-level raises the ceiling",
+          fixed, plan.ceilingDbfs, plan.loudness.ceilingOrigin, plan.ceilingDbfs))
     }
 
     var player = ProbePlayer(backend: backend, template: template)
@@ -315,8 +317,8 @@ private struct Session: Sendable {
         throw Preflight.clippingError(peakDbfs: played.record.peakDbfs, levelDbfs: level)
       case .fail(.nothingHeard):
         throw Preflight.nothingHeardError(
-          ceilingDbfs: plan.ceilingDbfs, listener: plan.listener, probes: probes.count,
-          chosenLevel: fixed, terminalApp: plan.permission.app.name)
+          loudness: plan.loudness, probes: probes.count, chosenLevel: fixed,
+          terminalApp: plan.permission.app.name)
       }
     }
   }

@@ -122,7 +122,7 @@ private actor ChangingDeviceBackend: AudioBackend {
     #expect(probed.result == nil)
   }
 
-  @Test func knownHeadphonesKeepTheirCeilingWhileProbingChannels() {
+  @Test func knownHeadphonesKeepTheirCeilingWhileProbingChannels() throws {
     var headphones = SimulatedCatalog.macSpeakers
     headphones.output?.dataSource = "hdpn"
     let mic = SimulatedCatalog.macMicrophone
@@ -130,18 +130,41 @@ private actor ChangingDeviceBackend: AudioBackend {
       output: headphones.ref, input: mic.ref, outChannels: [1, 2], inChannel: 1,
       inChannelName: "Loop 1", autoInChannel: false)
 
-    #expect(
-      ChannelProbe.listenerKind(
-        options: PreflightOptions(), setup: onHeadphones, output: headphones)
-        == .headphones, "a loop-named channel must not lift the headphone ceiling")
-    #expect(
-      ChannelProbe.listenerKind(
-        options: PreflightOptions(), setup: Self.setup, output: Self.scarlett)
-        == .unknown)
-    #expect(
-      ChannelProbe.listenerKind(
-        options: PreflightOptions(listener: .speaker), setup: onHeadphones, output: headphones)
-        == .speaker, "--listener still wins")
+    let detected = try LevelRamp.probeLoudness(
+      setup: onHeadphones, output: headphones, options: PreflightOptions())
+    #expect(detected.ceilingDbfs == -30, "a loop-named channel must not lift the headphone ceiling")
+    let interface = try LevelRamp.probeLoudness(
+      setup: Self.setup, output: Self.scarlett, options: PreflightOptions())
+    #expect(interface.kind == .unknown)
+    #expect(interface.ceilingDbfs == -18)
+    // --listener names the listener but never lifts the headphone ceiling (WR-13).
+    for named in ListenerKind.allCases {
+      let flagged = try LevelRamp.probeLoudness(
+        setup: onHeadphones, output: headphones, options: PreflightOptions(listener: named))
+      #expect(flagged.kind == named)
+      #expect(flagged.ceilingDbfs == -30, "--listener \(named)")
+    }
+  }
+
+  @Test func theListenerFlagNeverLiftsTheProbeOnABluetoothOutput() async throws {
+    var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
+    output.transport = "bluetooth"
+    var setup = Self.setup
+    setup.output = output
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: SimulatedBackend(
+          scenario: Scenario(jitterFrames: 0, pathGainDb: -80, loopChannel: 7, seed: 3)),
+        setup: setup, channels: Self.scarlett.input?.channels ?? [],
+        options: PreflightOptions(listener: .loopback))
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    let error = try #require(thrown)
+    #expect(error.code == "nothingHeardAtCeiling")
+    #expect(error.context["ceilingDbfs"] == "-30.0")
+    #expect(error.context["detectedListener"] == "headphones")
   }
 
   @Test func noChannelHearingAnythingAtTheCeilingIsNothingHeard() async throws {

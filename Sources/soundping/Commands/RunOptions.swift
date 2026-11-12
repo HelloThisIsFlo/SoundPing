@@ -17,20 +17,20 @@ struct RunOptions: ParsableArguments {
   @Option(
     parsing: .unconditional,
     help:
-      "Test-sound level in dBFS, confirmed by one probe. Default: found by a ramp that starts at -48 dBFS and steps up 6 dB until the chirp is heard, never above the listener's ceiling."
+      "Test-sound level in dBFS (0 or below), confirmed by one probe. Never above the ceiling (see --max-level): a higher value is lowered to it, with a warning. Default: found by a ramp that starts at -48 dBFS and steps up 6 dB until the chirp is heard."
   )
   var level: Double?
 
   @Option(
     parsing: .unconditional,
     help:
-      "The loudest test sound allowed, in dBFS (0 or below). Replaces the listener's ceiling: loopback -6, speakers -12 (the built-in output, only when it reports its speakers), headphones -30 (any Bluetooth output, and a built-in output that does not clearly report its speakers), unknown -18 (USB and other interfaces). The only way to go louder than that, for example for a Bluetooth speaker."
+      "The loudest test sound allowed, in dBFS (0 or below). Without it the ceiling comes from the devices: headphones -30 (any Bluetooth output, and a built-in output that does not clearly report its speakers), speakers -12 (the built-in output when it reports its speakers), loopback -6 (a Loop input channel or a virtual input on the output's own device, or a virtual output into a virtual input), unknown -18 (everything else: USB and other interfaces, a virtual output heard by a microphone). --listener can only lower it. This flag replaces it and is the only way to a louder test sound, for example -18 for a Bluetooth speaker or -6 for a cable loop on an interface."
   )
   var maxLevel: Double?
 
   @Option(
     help:
-      "Who hears the test sound: loopback, speaker, headphones or unknown. Default: worked out from the devices. It sets the ceiling and, without --template, the chirp band."
+      "Who hears the test sound, for when SoundPing cannot tell: loopback, speaker, headphones or unknown. Default: worked out from the devices. It picks the chirp band (without --template) and can lower the ceiling to that listener's, never raise it: headphones stay at -30 dBFS whatever it says. Only --max-level allows a louder test sound."
   )
   var listener: String?
 
@@ -274,9 +274,7 @@ struct RunOptions: ParsableArguments {
       }
       kind = parsed
     }
-    if let maxLevel {
-      _ = try LevelRamp.resolveCeiling(kind: kind ?? .unknown, maxLevelDbfs: maxLevel)
-    }
+    if let maxLevel { _ = try LevelRamp.validatedMaxLevel(maxLevel) }
     return PreflightOptions(
       maxLevelDbfs: maxLevel, listener: kind, templateFollowsListener: template == nil)
   }

@@ -96,32 +96,43 @@ public struct Preflight: Sendable {
       ])
   }
 
+  /// Nothing heard even at the ceiling (or at `--level`). The hint names what set the ceiling and
+  /// the one flag that raises it, `--max-level` (the model is at `LevelRamp.classify`).
   static func nothingHeardError(
-    ceilingDbfs: Double, listener: ListenerKind, probes: Int, chosenLevel: Double?,
-    terminalApp: String?
+    loudness: LevelRamp.Loudness, probes: Int, chosenLevel: Double?, terminalApp: String?
   ) -> SoundPingError {
     let detail: String
     if let chosenLevel {
       detail = String(format: "Nothing was heard at the chosen level of %.0f dBFS", chosenLevel)
     } else {
       detail = String(
-        format: "Nothing was heard even at the ceiling of %.0f dBFS for a %@ listener",
-        ceilingDbfs, listener.rawValue)
+        format: "Nothing was heard even at the ceiling of %.0f dBFS (%@)",
+        loudness.ceilingDbfs, loudness.ceilingOrigin)
     }
     let access = terminalApp.map { " for \($0)" } ?? ""
     var fix =
       "check the cable or loop routing, that microphone access is allowed\(access), the output volume and the input gain, then rerun"
-    if listener == .headphones {
+    switch loudness.source {
+    case .maxLevel:
+      fix += "; the ceiling is your --max-level, raise it only when you know the level is safe"
+    case .listenerFlag:
       fix +=
-        "; Bluetooth outputs and built-in outputs that do not clearly report their speakers are treated as headphones, so for a Bluetooth speaker (or any output that is not at your ears) allow a louder probe with --max-level, for example --max-level -18, only when you know the level is safe"
-    } else if listener == .speaker {
-      fix += "; raise the ceiling with --max-level only when you know the level is safe"
+        "; --listener \(loudness.kind.rawValue) lowered the ceiling, so drop it, or allow a louder probe with --max-level only when you know the level is safe"
+    case .devices where loudness.detected == .headphones:
+      fix +=
+        "; Bluetooth outputs and built-in outputs that do not clearly report their speakers are treated as headphones, and --listener does not change that ceiling, so for a Bluetooth speaker (or any output that is not at your ears) allow a louder probe with --max-level, for example --max-level -18, only when you know the level is safe"
+    case .devices where loudness.detected == .loopback:
+      break
+    case .devices:
+      fix +=
+        "; only --max-level raises the ceiling (--listener does not), so pass it only when you know the level is safe"
     }
     return .preflight(
       "nothingHeardAtCeiling", detail,
       context: [
-        "ceilingDbfs": String(ceilingDbfs), "listener": listener.rawValue,
-        "probes": String(probes), "fix": fix,
+        "ceilingDbfs": String(loudness.ceilingDbfs), "listener": loudness.kind.rawValue,
+        "detectedListener": loudness.detected.rawValue,
+        "ceilingSource": loudness.source.rawValue, "probes": String(probes), "fix": fix,
       ])
   }
 }
@@ -156,11 +167,13 @@ public enum ListenerKind: String, Codable, Sendable, CaseIterable {
   case loopback, speaker, headphones, unknown
 }
 
-/// What a person can pass to a run to steer the preflight.
+/// What a person can pass to a run to steer the preflight. How the two combine with the detected
+/// listener is written down at `LevelRamp.classify`.
 public struct PreflightOptions: Sendable, Equatable {
-  /// Replaces the listener's ceiling (`--max-level`). The one way to go louder than the default.
+  /// Replaces the ceiling, louder or quieter (`--max-level`). The only way to a louder test sound.
   public var maxLevelDbfs: Double?
-  /// Overrides the classification of the listener (`--listener`).
+  /// Names the listener when SoundPing cannot tell (`--listener`): it picks the reported listener
+  /// and the chirp band, and can lower the ceiling to that listener's, never raise it.
   public var listener: ListenerKind?
   /// The chirp band follows the listener unless a template was asked for by name (D-12).
   public var templateFollowsListener: Bool

@@ -127,11 +127,25 @@ private actor GlitchedWindowsBackend: AudioBackend {
     #expect(LevelRamp.classify(setup: usb, output: Self.scarlett, input: Self.duplex) == .unknown)
   }
 
-  @Test func aVirtualOutputIsALoopbackWhateverItsInput() {
+  @Test func aVirtualOutputHeardByAMicrophoneIsNoLoop() {
+    // CR-04: a virtual device that monitors to headphones or speakers reaches the microphone
+    // acoustically, so it keeps the -18 dBFS unknown ceiling, not the -6 dBFS loopback one.
     let setup = Self.setup(output: Self.duplex, input: Self.macMicrophone)
     #expect(
       LevelRamp.classify(setup: setup, output: Self.duplex, input: Self.macMicrophone)
-        == .loopback)
+        == .unknown)
+    let usbMic = Self.scarlett
+    let onUSB = Self.setup(output: Self.duplex, input: usbMic)
+    #expect(LevelRamp.classify(setup: onUSB, output: Self.duplex, input: usbMic) == .unknown)
+  }
+
+  @Test func aVirtualOutputIntoAVirtualInputIsALoopback() {
+    // Two virtual devices on two UIDs (for example a virtual output routed into another one).
+    var other = Self.duplex
+    other.uid = "soundping-sim-other-virtual"
+    let setup = Self.setup(output: Self.duplex, input: other)
+    #expect(setup.output.uid != setup.input.uid)
+    #expect(LevelRamp.classify(setup: setup, output: Self.duplex, input: other) == .loopback)
     // The recorded transports are enough when the device list is unavailable.
     let recorded = ResolvedSetup(
       output: Self.duplex.ref, input: Self.duplex.ref, outChannels: [1, 2], inChannel: 1)
@@ -215,16 +229,18 @@ private actor GlitchedWindowsBackend: AudioBackend {
     #expect(!LevelRamp.outputIsHeadphones(setup: setup, output: usb))
   }
 
-  @Test func theChannelProbeAlsoKeepsTheHeadphoneCeilingOnABluetoothOutput() {
+  @Test func theChannelProbeAlsoKeepsTheHeadphoneCeilingOnABluetoothOutput() throws {
     let earbuds = Self.bluetooth(from: Self.macSpeakers)
     let setup = Self.setup(output: earbuds, input: Self.macMicrophone)
-    #expect(
-      ChannelProbe.listenerKind(options: PreflightOptions(), setup: setup, output: earbuds)
-        == .headphones)
-    #expect(
-      ChannelProbe.listenerKind(
-        options: PreflightOptions(listener: .speaker), setup: setup, output: earbuds) == .speaker,
-      "--listener still wins")
+    let detected = try LevelRamp.probeLoudness(
+      setup: setup, output: earbuds, options: PreflightOptions())
+    #expect(detected.kind == .headphones)
+    #expect(detected.ceilingDbfs == -30)
+    // --listener names the listener and the band, but never lifts the headphone ceiling (WR-13).
+    let named = try LevelRamp.probeLoudness(
+      setup: setup, output: earbuds, options: PreflightOptions(listener: .speaker))
+    #expect(named.kind == .speaker)
+    #expect(named.ceilingDbfs == -30)
   }
 
   @Test func eachListenerHasItsOwnCeiling() {
@@ -235,12 +251,40 @@ private actor GlitchedWindowsBackend: AudioBackend {
   }
 
   @Test func maxLevelReplacesTheCeilingAndMustNotBeAboveFullScale() throws {
-    #expect(try LevelRamp.resolveCeiling(kind: .headphones, maxLevelDbfs: nil) == -30)
-    #expect(try LevelRamp.resolveCeiling(kind: .headphones, maxLevelDbfs: -10) == -10)
-    #expect(try LevelRamp.resolveCeiling(kind: .loopback, maxLevelDbfs: 0) == 0)
-    #expect(throws: SoundPingError.self) {
-      _ = try LevelRamp.resolveCeiling(kind: .loopback, maxLevelDbfs: 3)
+    let none = PreflightOptions()
+    #expect(try LevelRamp.loudness(detected: .headphones, options: none).ceilingDbfs == -30)
+    let louder = PreflightOptions(maxLevelDbfs: -10)
+    #expect(try LevelRamp.loudness(detected: .headphones, options: louder).ceilingDbfs == -10)
+    #expect(try LevelRamp.loudness(detected: .headphones, options: louder).source == .maxLevel)
+    let quieter = PreflightOptions(maxLevelDbfs: -40)
+    #expect(try LevelRamp.loudness(detected: .loopback, options: quieter).ceilingDbfs == -40)
+    #expect(
+      try LevelRamp.loudness(detected: .loopback, options: PreflightOptions(maxLevelDbfs: 0))
+        .ceilingDbfs == 0)
+    for bad in [3, Double.nan, .infinity, -.infinity] {
+      #expect(throws: SoundPingError.self) {
+        _ = try LevelRamp.loudness(detected: .loopback, options: PreflightOptions(maxLevelDbfs: bad))
+      }
     }
+  }
+
+  @Test func theListenerFlagCanLowerTheCeilingButNeverRaiseIt() throws {
+    let raise = try LevelRamp.loudness(
+      detected: .headphones, options: PreflightOptions(listener: .loopback))
+    #expect(raise.kind == .loopback, "the band and the reported listener follow the flag")
+    #expect(raise.ceilingDbfs == -30)
+    #expect(raise.source == .devices)
+    #expect(raise.listenerNotRaisedWarning?.contains("--max-level") == true)
+
+    let lower = try LevelRamp.loudness(
+      detected: .loopback, options: PreflightOptions(listener: .headphones))
+    #expect(lower.ceilingDbfs == -30)
+    #expect(lower.source == .listenerFlag)
+    #expect(lower.listenerNotRaisedWarning == nil)
+
+    let unknownToLoop = try LevelRamp.loudness(
+      detected: .unknown, options: PreflightOptions(listener: .loopback))
+    #expect(unknownToLoop.ceilingDbfs == -18, "a cable loop on an interface needs --max-level")
   }
 
   @Test func theChirpBandFollowsTheListener() {
@@ -661,16 +705,69 @@ private actor GlitchedWindowsBackend: AudioBackend {
     #expect(collected.probes.allSatisfy { $0.levelDbfs <= -30 })
   }
 
-  @Test func nothingHeardOnAHeadphoneListenerPointsAtMaxLevelForASpeaker() {
+  @Test func theListenerFlagOnABluetoothOutputRampsNoHigherThanTheHeadphoneCeiling() async throws {
+    // WR-13: `--listener loopback` (or speaker) used to replace the headphone ceiling outright.
+    var output = DeviceRef(uid: "bt-speaker", name: "Bluetooth Speaker")
+    output.transport = "bluetooth"
+    let setup = ResolvedSetup(
+      output: output, input: SimulatedCatalog.macMicrophone.ref, outChannels: [1, 2], inChannel: 1)
+    for named in [ListenerKind.loopback, .speaker, .unknown] {
+      let collected = try await Self.run(
+        Scenario(jitterFrames: 0, pathGainDb: -80, seed: 3),
+        preflight: PreflightOptions(listener: named), setup: setup)
+      let error = try #require(collected.error)
+      #expect(error.code == "nothingHeardAtCeiling")
+      #expect(error.context["ceilingDbfs"] == "-30.0", "--listener \(named)")
+      #expect(error.context["detectedListener"] == "headphones")
+      #expect(collected.probes.allSatisfy { $0.levelDbfs <= -30 }, "--listener \(named)")
+    }
+
+    // A run that locks reports the flag's listener, the headphone ceiling, and why.
+    let locked = try await Self.run(
+      Scenario(jitterFrames: 0, seed: 3), preflight: PreflightOptions(listener: .loopback),
+      setup: setup)
+    let preflight = try #require(locked.result?.preflight)
+    #expect(preflight.listenerKind == .loopback)
+    #expect(preflight.ceilingDbfs == -30)
+    #expect(preflight.lockedLevelDbfs <= -30)
+    #expect(preflight.warnings.contains { $0.contains("does not raise") }, "\(preflight.warnings)")
+  }
+
+  @Test func nothingHeardOnAHeadphoneListenerPointsAtMaxLevelForASpeaker() throws {
+    let headphones = try LevelRamp.loudness(detected: .headphones, options: PreflightOptions())
     let error = Preflight.nothingHeardError(
-      ceilingDbfs: -30, listener: .headphones, probes: 4, chosenLevel: nil, terminalApp: nil)
+      loudness: headphones, probes: 4, chosenLevel: nil, terminalApp: nil)
     let fix = error.context["fix"] ?? ""
     #expect(fix.contains("--max-level"), "\(fix)")
     #expect(fix.contains("Bluetooth speaker"), "\(fix)")
-    // Other listeners do not get the Bluetooth hint.
+    #expect(fix.contains("--listener does not change"), "\(fix)")
+    #expect(error.context["ceilingSource"] == "devices")
+
+    // An unknown output: --max-level is the one way up, and the Bluetooth hint is not given.
     let unknown = Preflight.nothingHeardError(
-      ceilingDbfs: -18, listener: .unknown, probes: 4, chosenLevel: nil, terminalApp: nil)
-    #expect(unknown.context["fix"]?.contains("--max-level") == false)
+      loudness: try LevelRamp.loudness(detected: .unknown, options: PreflightOptions()),
+      probes: 4, chosenLevel: nil, terminalApp: nil)
+    #expect(unknown.context["fix"]?.contains("--max-level") == true)
+    #expect(unknown.context["fix"]?.contains("Bluetooth") == false)
+
+    // A detected loop that hears nothing at -6 dBFS is a routing problem, not a ceiling one.
+    let loop = Preflight.nothingHeardError(
+      loudness: try LevelRamp.loudness(detected: .loopback, options: PreflightOptions()),
+      probes: 8, chosenLevel: nil, terminalApp: nil)
+    #expect(loop.context["fix"]?.contains("--max-level") == false)
+
+    // A ceiling lowered by --listener names the flag; one set by --max-level says so.
+    let lowered = Preflight.nothingHeardError(
+      loudness: try LevelRamp.loudness(
+        detected: .loopback, options: PreflightOptions(listener: .headphones)),
+      probes: 4, chosenLevel: nil, terminalApp: nil)
+    #expect(lowered.context["fix"]?.contains("--listener headphones lowered") == true)
+    #expect(lowered.detail.contains("set by --listener headphones"), "\(lowered.detail)")
+    let capped = Preflight.nothingHeardError(
+      loudness: try LevelRamp.loudness(
+        detected: .headphones, options: PreflightOptions(maxLevelDbfs: -20)),
+      probes: 5, chosenLevel: nil, terminalApp: nil)
+    #expect(capped.context["fix"]?.contains("your --max-level") == true)
   }
 
   @Test func aMutedOutputIsNamedBeforeTheFirstProbe() async throws {

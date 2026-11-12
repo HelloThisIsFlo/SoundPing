@@ -9,6 +9,15 @@ SoundPing runs named tests ("recipes"). A recipe pairs a trigger with a listener
 
 Each test fires many hits and shows a speed-test-style result: the median latency, the jitter and a graph. That lets you trace a laggy feel to its cause (MIDI transport, your DAW, the output chain, the speakers or headphones) instead of guessing.
 
+## Test-sound loudness
+
+The test sound may reach your ears, so it never goes above a ceiling.
+
+- **SoundPing picks the ceiling from your output:** headphones -30 dBFS (any Bluetooth output, and a built-in output that does not clearly report its speakers), built-in speakers -12, a loop it can see -6, anything else -18.
+- **`--listener`** tells SoundPing who listens when it cannot tell. It can lower the ceiling, never raise it.
+- **`--max-level`** is the only way to a louder test sound, for example `--max-level -18` for a Bluetooth speaker.
+- **`--level`** picks a fixed level instead of the gentle ramp, and is still capped at the ceiling.
+
 ## Status
 
 🚧 The engine and CLI are being built. There is no release yet.
