@@ -127,6 +127,10 @@ public struct BackendInfo: Sendable, Equatable {
 public protocol AudioBackend: AnyObject, Sendable {
   /// Opens the devices. Templates are made at a nominal rate; a backend regenerates them at the
   /// device's real rate with `StimulusTemplate.atSampleRate(_:)` and reports that rate back.
+  ///
+  /// A backend can be opened again (the channel probe opens one per channel). Each open has its own
+  /// `events` stream, read after `open`; `stop()` finishes it. An open on a backend that is still
+  /// open stops the previous open first, so nothing of it keeps running or reporting (IN-20).
   func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo
   /// Starts the audio and returns once both directions are delivering callbacks. The returned info
   /// is `open`'s with the buffer sizes the devices settled on, which is what the run measures and
@@ -162,6 +166,7 @@ public protocol AudioBackend: AnyObject, Sendable {
   func permissionStatus() async -> PermissionStatus
   /// Whether the output device, the system or this process has the output muted. Read only.
   func outputMuteState() async -> MuteState
+  /// The device events of the current open; see `open`.
   var events: AsyncStream<DeviceEvent> { get }
   /// Idempotent; the coordinator calls it on every exit path.
   func stop() async

@@ -110,6 +110,23 @@ struct HardwareRoundTripTests {
     #expect(ended.withLock { $0 }, "stop ends the stream of the open it belongs to")
   }
 
+  /// An open on a backend that is still open stops the previous open first (IN-20): its stream is
+  /// finished and its IOProcs and listeners are gone, so nothing of it keeps running. No IO is
+  /// started, so nothing is played.
+  @Test(.timeLimit(.minutes(1)))
+  func anOpenOnAnOpenBackendStopsThePreviousOpen() async throws {
+    let setup = try Self.resolveSetup()
+    let nominal = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    let backend = HALBackend()
+    _ = try await backend.open(setup, templates: [nominal])
+    let first = backend.events
+    _ = try await backend.open(setup, templates: [nominal])
+    for await _ in first {}  // returns only because the second open stopped the first
+    let second = backend.events
+    await backend.stop()
+    for await _ in second {}
+  }
+
   /// Every listener registers on a real device and is gone again afterwards, and watching a device
   /// that nobody touches says nothing.
   @Test func deviceListenersRegisterOnARealDeviceAndComeOffAgain() async throws {

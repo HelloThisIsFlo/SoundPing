@@ -145,4 +145,44 @@ private actor GoneAfterFirstHitBackend: AudioBackend {
       })
     #expect(await backend.stopCount >= 1)
   }
+
+  // MARK: A reopened simulator has a live event stream (IN-20)
+
+  @Test(.timeLimit(.minutes(1)))
+  func aDeviceEventAfterAStopAndReopenStillEndsTheRun() async throws {
+    // What the channel probe does on --simulate: open and stop once per channel, then measure.
+    let backend = SimulatedBackend(
+      scenario: Scenario(jitterFrames: 0, faults: [Fault(kind: .sampleRateChange, atHit: 3)], seed: 5))
+    let nominal = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    _ = try await backend.open(.simulatedDuplex, templates: [nominal])
+    let first = backend.events
+    await backend.stop()
+    for await _ in first {}  // returns only because stop() finished that open's stream
+
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    var thrown: SoundPingError?
+    do {
+      for try await _ in RunCoordinator(backend: backend, store: store).run(
+        Self.request(seed: 5, hits: 20))
+      {}
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    #expect(thrown?.kind == .deviceChanged)
+    #expect(thrown?.code == "sampleRateChanged")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func anOpenOnAnOpenSimulatorFinishesThePreviousOpensStream() async throws {
+    let backend = SimulatedBackend(scenario: Scenario(seed: 5))
+    let nominal = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    _ = try await backend.open(.simulatedDuplex, templates: [nominal])
+    let first = backend.events
+    _ = try await backend.open(.simulatedDuplex, templates: [nominal])
+    for await _ in first {}  // the second open stopped the first, as the HAL backend does
+    let second = backend.events
+    await backend.stop()
+    for await _ in second {}
+  }
 }

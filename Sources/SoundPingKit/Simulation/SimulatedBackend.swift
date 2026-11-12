@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Seeded random numbers (SplitMix64). The stdlib has no seedable generator, and the seed
 /// stored in run.json is what makes a bug report reproducible.
@@ -207,9 +208,22 @@ extension ResolvedSetup {
 /// microphone.
 public actor SimulatedBackend: AudioBackend {
   public nonisolated let scenario: Scenario
-  public nonisolated let events: AsyncStream<DeviceEvent>
+  /// The device events of the current open. `stop()` finishes the stream and the next `open()` makes
+  /// a fresh one, as on the HAL backend (IN-20): a reopened backend never hands out a finished
+  /// stream. Read it after `open()`.
+  public nonisolated var events: AsyncStream<DeviceEvent> { streams.withLock { $0.stream } }
 
-  private let eventContinuation: AsyncStream<DeviceEvent>.Continuation
+  private struct Streams {
+    var stream: AsyncStream<DeviceEvent>
+    var continuation: AsyncStream<DeviceEvent>.Continuation
+    var finished = false
+  }
+  private nonisolated let streams: Mutex<Streams>
+  private var eventContinuation: AsyncStream<DeviceEvent>.Continuation {
+    streams.withLock { $0.continuation }
+  }
+  /// Between an `open` and its `stop`.
+  private var isOpen = false
   private var templates: [String: StimulusTemplate] = [:]
   private var hits: [ScheduledHit] = []
   /// Input frame where each simulated xrun drops `xrunFrames` frames, ascending.
@@ -255,13 +269,33 @@ public actor SimulatedBackend: AudioBackend {
   public init(scenario: Scenario) {
     self.scenario = scenario
     let (stream, continuation) = AsyncStream<DeviceEvent>.makeStream()
-    self.events = stream
-    self.eventContinuation = continuation
+    self.streams = Mutex(Streams(stream: stream, continuation: continuation))
+  }
+
+  /// The start of an open: a backend that is still open is stopped first, and one that was stopped
+  /// gets a stream that is not finished.
+  private func beginOpen() {
+    if isOpen { finishStream() }
+    isOpen = true
+    streams.withLock { streams in
+      guard streams.finished else { return }
+      let (stream, continuation) = AsyncStream<DeviceEvent>.makeStream()
+      streams = Streams(stream: stream, continuation: continuation)
+    }
+  }
+
+  private func finishStream() {
+    let continuation = streams.withLock { streams in
+      streams.finished = true
+      return streams.continuation
+    }
+    continuation.finish()
   }
 
   public func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws
     -> BackendInfo
   {
+    beginOpen()
     var regenerated: [String: StimulusTemplate] = [:]
     for template in templates {
       regenerated[template.id] = try template.atSampleRate(scenario.sampleRate)
@@ -561,7 +595,8 @@ public actor SimulatedBackend: AudioBackend {
 
   public func stop() async {
     started = false
-    eventContinuation.finish()
+    isOpen = false
+    finishStream()
   }
 
   // MARK: - The virtual clocks

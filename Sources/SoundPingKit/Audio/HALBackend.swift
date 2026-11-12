@@ -81,6 +81,12 @@ public final class HALBackend: AudioBackend {
   public func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws
     -> BackendInfo
   {
+    // An open on a backend that is still open stops the previous open first (IN-20): its IOProcs
+    // and listeners would otherwise keep running, unreferenced, and yield into the new stream.
+    let stillOpen = state.withLock { state in
+      !state.stopped && (state.rt != nil || !state.devices.isEmpty || state.listeners != nil)
+    }
+    if stillOpen { await stop() }
     state.withLock { $0.beginOpen() }
     let listing = try HALDeviceCatalog().listing()
     let outInfo = try Self.find(setup.output, in: listing, role: "output")
