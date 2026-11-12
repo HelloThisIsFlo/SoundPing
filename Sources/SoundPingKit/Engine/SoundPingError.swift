@@ -71,6 +71,15 @@ extension SoundPingError {
     case .ioStopped(let uid):
       return .deviceChanged(
         "ioStopped", "device '\(uid)' stopped unexpectedly", context: ["uid": uid])
+    case .outputRouteChanged(let uid, let property, let from, let to):
+      return .deviceChanged(
+        "outputRouteChanged",
+        "device '\(uid)' switched its output (\(property) \(from) → \(to)), so the test sound may now go somewhere its level was not chosen for",
+        context: [
+          "uid": uid, "property": property, "from": from, "to": to,
+          "fix":
+            "leave the output as it is (for example do not plug or unplug headphones) during the run, then rerun",
+        ])
     }
   }
 }

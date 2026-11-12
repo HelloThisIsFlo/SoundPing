@@ -6,7 +6,9 @@ import Synchronization
 ///
 /// A rate, buffer size or stream layout that differs from what the run opened with, a device that
 /// is no longer alive or no longer listed, and an IO that stopped on its own all abort the run: a
-/// number measured across such a change would hide an offset. A processor overload is not an event:
+/// number measured across such a change would hide an offset. So does an output whose data source
+/// or jack state moves (WR-14): the loudness ceiling was chosen for the route the run started on,
+/// and headphones plugged into a built-in output that was the speakers would get the speaker level. A processor overload is not an event:
 /// it is written into the run state as a fault interval (`RTState.noteOverload`) that rejects the
 /// hits it overlaps. Every notification is compared with the value the run started
 /// with before it becomes an event, so another app changing its own buffer size on a shared device
@@ -63,6 +65,11 @@ final class DeviceListeners: Sendable {
     kAudioDeviceProcessorOverload,  // 'over'
     kAudioDevicePropertyIOStoppedAbnormally,  // 'stpd'
   ]
+  /// The output-scope selectors of a device that plays, each watched only where it is implemented.
+  static let outputRouteSelectors: [AudioObjectPropertySelector] = [
+    kAudioDevicePropertyDataSource,  // 'ssrc'
+    kAudioDevicePropertyJackIsConnected,  // 'jack'
+  ]
   /// The system object's list of devices: a device in use that leaves it is gone.
   static let systemSelector: AudioObjectPropertySelector = kAudioHardwarePropertyDevices  // 'dev#'
 
@@ -74,6 +81,9 @@ final class DeviceListeners: Sendable {
     /// Which directions this device's IOProc runs, so an overload lands in the right label space.
     var captures: Bool
     var plays: Bool
+    /// The output data source the run's loudness was decided with (`DeviceInfo.output.dataSource`).
+    /// A data source that differs from it, even before the first notification, is a route change.
+    var outputDataSource: String? = nil
   }
 
   /// How far before the overload notification's own position the fault interval starts, at least.
@@ -162,6 +172,7 @@ final class DeviceListeners: Sendable {
         guard !stopped.isSet else { return }
         sink.yield(.ioStopped(uid: uid))
       }
+      if device.plays { watchOutputRoute(of: device) }
     }
 
     // 'dev#'
@@ -175,6 +186,67 @@ final class DeviceListeners: Sendable {
         sink.yield(.gone(uid: uids[id] ?? "unknown"))
       }
     }
+  }
+
+  /// 'ssrc' and 'jack' on the output scope (WR-14), each only where the device implements it, so a
+  /// device without a data source or a jack is not counted as a refused registration. The data
+  /// source is compared with the one the loudness was decided with, and read once more after
+  /// registering, so a switch between the device read in `open` and now is not missed.
+  private func watchOutputRoute(of device: Watched) {
+    let id = device.id
+    let uid = device.uid
+    let sink = self.sink
+    let scope = kAudioObjectPropertyScopeOutput
+
+    if Self.implements(id, kAudioDevicePropertyDataSource, scope: scope) {
+      let classified = device.outputDataSource
+      let check: @Sendable () -> Void = {
+        let now = Self.outputDataSource(of: id)
+        guard now != classified else { return }
+        sink.yield(
+          .outputRouteChanged(
+            uid: uid, property: "dataSource", from: classified ?? "none", to: now ?? "none"))
+      }
+      add(id, kAudioDevicePropertyDataSource, scope: scope) { [stopped] in
+        guard !stopped.isSet else { return }
+        check()
+      }
+      check()
+    }
+
+    if Self.implements(id, kAudioDevicePropertyJackIsConnected, scope: scope) {
+      let connected = Self.jackIsConnected(of: id)
+      add(id, kAudioDevicePropertyJackIsConnected, scope: scope) { [stopped] in
+        guard !stopped.isSet else { return }
+        let now = Self.jackIsConnected(of: id)
+        guard now != connected else { return }
+        sink.yield(
+          .outputRouteChanged(
+            uid: uid, property: "jackIsConnected", from: connected ?? "none", to: now ?? "none"))
+      }
+    }
+  }
+
+  private static func implements(
+    _ id: AudioObjectID, _ selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope
+  ) -> Bool {
+    var address = HALProperty.address(selector, scope: scope)
+    return AudioObjectHasProperty(id, &address)
+  }
+
+  /// The output data source as the device catalog reads it, so the two compare equal when nothing moved.
+  static func outputDataSource(of id: AudioDeviceID) -> String? {
+    HALProperty.get(
+      id, kAudioDevicePropertyDataSource, scope: kAudioObjectPropertyScopeOutput,
+      initial: UInt32(0)
+    ).flatMap(HALProperty.fourCharCode)
+  }
+
+  private static func jackIsConnected(of id: AudioDeviceID) -> String? {
+    HALProperty.get(
+      id, kAudioDevicePropertyJackIsConnected, scope: kAudioObjectPropertyScopeOutput,
+      initial: UInt32(0)
+    ).map { $0 != 0 ? "connected" : "disconnected" }
   }
 
   /// From now until `adoptSettledBuffers`, a buffer size notification is not news: the HAL may

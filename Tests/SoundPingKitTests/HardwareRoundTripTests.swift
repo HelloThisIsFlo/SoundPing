@@ -143,4 +143,52 @@ struct HardwareRoundTripTests {
     for await event in stream { seen.append(event) }
     #expect(seen.isEmpty, "unexpected events: \(seen)")
   }
+
+  /// WR-14 on the real HAL, without playing anything: the output-route listeners register on a
+  /// built-in output that reports a data source, say nothing while it keeps the one the run was
+  /// classified with, and report a route change as soon as it differs from it.
+  @Test func theOutputRouteIsWatchedOnARealBuiltInOutput() async throws {
+    let listing = try HALDeviceCatalog().listing()
+    guard
+      let device = listing.audio.first(where: {
+        $0.transport == "builtIn" && $0.output?.dataSource != nil
+      })
+    else { return }
+    let ids = HALProperty.array(
+      AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices,
+      of: AudioDeviceID.self, initial: AudioDeviceID(0))
+    let id = try #require(
+      ids.first { HALProperty.string($0, kAudioDevicePropertyDeviceUID) == device.uid })
+    #expect(DeviceListeners.outputDataSource(of: id) == device.output?.dataSource)
+
+    func watch(classifiedAs dataSource: String?) async -> [DeviceEvent] {
+      let rt = RTState(
+        RTState.Configuration(
+          sampleRate: device.nominalSampleRate, inputSlot: nil, outputSlots: [], templates: [],
+          scheduleCapacity: 1, stampCapacity: 1))
+      let (stream, sink) = AsyncStream<DeviceEvent>.makeStream()
+      let listeners = DeviceListeners(
+        watching: [
+          .init(
+            id: id, uid: device.uid, bufferFrames: 512, captures: false, plays: true,
+            outputDataSource: dataSource)
+        ],
+        rate: device.nominalSampleRate, rt: rt, sink: sink)
+      #expect(listeners.refused.load(ordering: .relaxed) == 0)
+      listeners.remove()
+      sink.finish()
+      var seen: [DeviceEvent] = []
+      for await event in stream { seen.append(event) }
+      return seen
+    }
+
+    #expect(await watch(classifiedAs: device.output?.dataSource).isEmpty)
+    let moved = await watch(classifiedAs: "xxxx")
+    #expect(
+      moved == [
+        .outputRouteChanged(
+          uid: device.uid, property: "dataSource", from: "xxxx",
+          to: device.output?.dataSource ?? "none")
+      ])
+  }
 }

@@ -178,7 +178,7 @@ public final class HALBackend: AudioBackend {
     var watched = [
       DeviceListeners.Watched(
         id: outID, uid: outInfo.uid, bufferFrames: outBuffer, captures: outID == inID,
-        plays: true)
+        plays: true, outputDataSource: outInfo.output?.dataSource)
     ]
     if inID != outID {
       watched.append(

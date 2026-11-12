@@ -71,6 +71,11 @@ public enum DeviceEvent: Sendable, Equatable {
   case bufferSizeChanged(uid: String, from: Int, to: Int)
   case streamConfigChanged(uid: String)
   case ioStopped(uid: String)
+  /// The output's route moved: its data source (`'ssrc'`, for example the built-in speakers
+  /// switching to headphones) or its jack state (`'jack'`). The ceiling was decided for the route
+  /// the run started on, so the sound may now reach someone's ears too loud (WR-14). `property` is
+  /// `dataSource` or `jackIsConnected`; `from` and `to` are the values ("none" when unreadable).
+  case outputRouteChanged(uid: String, property: String, from: String, to: String)
 }
 
 public struct BackendInfo: Sendable, Equatable {

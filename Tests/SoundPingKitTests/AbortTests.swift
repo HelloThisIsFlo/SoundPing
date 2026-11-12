@@ -43,6 +43,53 @@ private actor LateEventBackend: AudioBackend {
   }
 }
 
+/// Forwards to the simulator and announces that the output switched to its headphone data source
+/// while the first probe of the ramp waits for its samples, like headphones plugged into a built-in
+/// output during the run (WR-14).
+private actor RouteChangeBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private let continuation: AsyncStream<DeviceEvent>.Continuation
+  private var announced = false
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario) {
+    inner = SimulatedBackend(scenario: scenario)
+    (events, continuation) = AsyncStream<DeviceEvent>.makeStream()
+  }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    try await inner.open(setup, templates: templates)
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    if !announced {
+      announced = true
+      continuation.yield(
+        .outputRouteChanged(
+          uid: "soundping-sim-duplex", property: "dataSource", from: "ispk", to: "hdpn"))
+      // The coordinator ends the run on the event; this wait never completes on its own.
+      while true { try await Task.sleep(for: .seconds(3600)) }
+    }
+    try await inner.waitUntilCaptured(throughInputFrame: frame)
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    await inner.stamps(covering: range)
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async -> [FaultInterval] {
+    await inner.faults(overlappingInput: input, output: output)
+  }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async {
+    await inner.stop()
+    continuation.finish()
+  }
+}
+
 @Suite struct AbortTests {
   private struct Outcome {
     var events: [RunEvent]
@@ -288,6 +335,51 @@ private actor LateEventBackend: AudioBackend {
     let codes = Set(DeviceListeners.deviceSelectors.compactMap { HALProperty.fourCharCode($0) })
     #expect(codes == ["livn", "nsrt", "fsiz", "slay", "over", "stpd"])
     #expect(HALProperty.fourCharCode(DeviceListeners.systemSelector) == "dev#")
+    let route = Set(
+      DeviceListeners.outputRouteSelectors.compactMap { HALProperty.fourCharCode($0) })
+    #expect(route == ["ssrc", "jack"])
+  }
+
+  // MARK: An output that switches route aborts (WR-14)
+
+  @Test func anOutputRouteChangeIsADeviceChange() {
+    let error = SoundPingError.forDeviceEvent(
+      .outputRouteChanged(uid: "built-in", property: "dataSource", from: "ispk", to: "hdpn"))
+    #expect(error.kind == .deviceChanged)
+    #expect(error.code == "outputRouteChanged")
+    #expect(error.context["from"] == "ispk")
+    #expect(error.context["to"] == "hdpn")
+    #expect(error.context["property"] == "dataSource")
+  }
+
+  @Test func headphonesPluggedInDuringTheRampAbortTheRunBeforeAnyHit() async throws {
+    let (store, cleanup) = try Self.makeStore()
+    defer { cleanup() }
+    let outcome = await Self.run(
+      RouteChangeBackend(scenario: Scenario(jitterFrames: 0, seed: 5)), hits: 20, store: store)
+
+    #expect(outcome.error?.kind == .deviceChanged)
+    #expect(outcome.error?.code == "outputRouteChanged")
+    #expect(Self.abortCodes(outcome.events) == ["outputRouteChanged"])
+    #expect(!Self.hasFinished(outcome.events))
+    #expect(Self.savedRunFiles(in: store).isEmpty)
+  }
+
+  @Test func headphonesPluggedInDuringAChannelProbeEndTheProbe() async throws {
+    let scarlett = SimulatedCatalog.scarlett
+    let setup = ResolvedSetup(
+      output: scarlett.ref, input: scarlett.ref, outChannels: [1, 2], inChannel: 0,
+      autoInChannel: true)
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: RouteChangeBackend(scenario: Scenario(jitterFrames: 0, loopChannel: 7, seed: 3)),
+        setup: setup, channels: scarlett.input?.channels ?? [])
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    #expect(thrown?.kind == .deviceChanged)
+    #expect(thrown?.code == "outputRouteChanged")
   }
 
   // MARK: A buffer size that settles at the start is adopted (WR-05)
