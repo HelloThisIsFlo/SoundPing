@@ -106,6 +106,7 @@ public struct ChannelProbe: Sendable {
 
     var scores: [ChannelScore] = []
     var anythingHeard = false
+    var anyUnjudged = false
     var app: ResponsibleApp?
     for (position, channel) in channels.enumerated() {
       var channelSetup = setup
@@ -137,6 +138,7 @@ public struct ChannelProbe: Sendable {
             backend: backend)
         }
         anythingHeard = anythingHeard || score.heardSomething
+        anyUnjudged = anyUnjudged || score.unjudged
         scores.append(score.score)
       } catch {
         await backend.stop()
@@ -149,7 +151,9 @@ public struct ChannelProbe: Sendable {
       $0.confidence != $1.confidence ? $0.confidence > $1.confidence : $0.index < $1.index
     }
     guard let best = ranked.first, best.confidence >= Self.minConfidence else {
-      if !anythingHeard {
+      // Only zeros everywhere is a dead signal path; probes spoilt by glitches said nothing either
+      // way, so they never make it "only zeros".
+      if !anythingHeard, !anyUnjudged {
         throw Preflight.silenceError(device: setup.input.name, channel: nil)
       }
       guard let loudness else {
@@ -183,12 +187,17 @@ public struct ChannelProbe: Sendable {
 
   private struct Probed {
     var score: ChannelScore
+    /// A probe that was judged heard something (not only zeros).
     var heardSomething: Bool
+    /// A probe stayed spoilt by glitches after its replays, so this channel was not fully judged.
+    var unjudged: Bool
   }
 
   /// One channel: climb from -48 dBFS to the ceiling until the chirp is heard clearly, keeping the
   /// best confidence. An all-zero channel is dead and is not played louder; a clipping one is
-  /// already loud enough.
+  /// already loud enough. A probe spoilt by an overload or a lost-frames gap was not judged, so it
+  /// is replayed at the same level (at most `LevelRamp.maxGlitchRetries` times, as the level ramp
+  /// does) and never counts as heard (IN-19).
   private static func probe(
     channel: ChannelInfo, ceiling: Double, nominal: StimulusTemplate, info: BackendInfo,
     setup: ResolvedSetup, backend: any AudioBackend
@@ -206,23 +215,35 @@ public struct ChannelProbe: Sendable {
     var best = ChannelScore(
       index: channel.index, name: channel.name, confidence: 0, levelDbfs: level)
     var heardSomething = false
+    var unjudged = false
+    var glitchRetries = 0
     while true {
       try Task.checkCancellation()
       let played = try await player.play(atLevel: level, using: &listener)
       if played.silent { break }
-      heardSomething = true
-      if played.record.confidence > best.confidence {
-        best.confidence = played.record.confidence
-        best.levelDbfs = level
+      if played.glitched {
+        if glitchRetries < LevelRamp.maxGlitchRetries {
+          glitchRetries += 1
+          continue
+        }
+        unjudged = true
+      } else {
+        heardSomething = true
+        if played.record.confidence > best.confidence {
+          best.confidence = played.record.confidence
+          best.levelDbfs = level
+        }
+        if played.record.confidence >= LevelRamp.confidenceTarget
+          || played.record.peakDbfs >= LevelRamp.clippingDbfs
+        {
+          break
+        }
       }
-      if played.record.confidence >= LevelRamp.confidenceTarget
-        || played.record.peakDbfs >= LevelRamp.clippingDbfs || level >= ceiling
-      {
-        break
-      }
+      if level >= ceiling { break }
       level = Swift.min(ceiling, level + stepUpDb)
+      glitchRetries = 0
     }
-    return Probed(score: best, heardSomething: heardSomething)
+    return Probed(score: best, heardSomething: heardSomething, unjudged: unjudged)
   }
 
   /// One channel's probe, raced against the backend's device events and a deadline. A sample-rate,

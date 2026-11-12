@@ -43,6 +43,49 @@ private actor ChangingDeviceBackend: AudioBackend {
   }
 }
 
+/// Forwards to the simulator, but the first `glitches` listening windows report an overload over
+/// the window, as a real glitch would. Remembers every level it was asked to play.
+private actor GlitchingProbeBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private var remaining: Int
+  private(set) var playedLevels: [Double] = []
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario, glitches: Int) {
+    inner = SimulatedBackend(scenario: scenario)
+    remaining = glitches
+    events = inner.events
+  }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    try await inner.open(setup, templates: templates)
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws {
+    playedLevels += hits.map { (20 * log10(Double($0.gain))).rounded() }
+    try await inner.schedule(hits)
+  }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    try await inner.waitUntilCaptured(throughInputFrame: frame)
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    await inner.stamps(covering: range)
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func faults(overlappingInput input: Range<Int64>, output: Range<Int64>) async -> [FaultInterval] {
+    if remaining > 0 {
+      remaining -= 1
+      return [FaultInterval(direction: .input, frames: input, cause: .overload)]
+    }
+    return await inner.faults(overlappingInput: input, output: output)
+  }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async { await inner.stop() }
+}
+
 /// `--in-channel auto` (D-11): play the chirp, hear which input channel it comes back on, say how
 /// sure that is, and refuse to guess when two channels hear it about equally. It is a probe: it
 /// never writes a run and never measures.
@@ -185,6 +228,61 @@ private actor ChangingDeviceBackend: AudioBackend {
 
     #expect(probed.error?.code == "nothingHeardAtCeiling")
     #expect(probed.error?.context["ceilingDbfs"] == "-40.0")
+  }
+
+  // MARK: Glitched probes are replayed, not stepped (IN-19)
+
+  @Test func aGlitchedProbeIsReplayedAtTheSameLevelAndNotCountedAsHeard() async throws {
+    let loop = try #require(Self.scarlett.input?.channels.first { $0.name == "Loop 1" })
+    let scenario = Scenario(jitterFrames: 0, loopChannel: 7, seed: 3)
+    let clean = GlitchingProbeBackend(scenario: scenario, glitches: 0)
+    let expected = try await ChannelProbe().run(
+      backend: clean, setup: Self.setup, channels: [loop])
+    let cleanLevels = await clean.playedLevels
+    #expect(cleanLevels.first == -48)
+
+    let backend = GlitchingProbeBackend(scenario: scenario, glitches: 2)
+    let result = try await ChannelProbe().run(
+      backend: backend, setup: Self.setup, channels: [loop])
+    // Two glitched probes replayed at -48 dBFS, then exactly the clean climb: no 12 dB step on a
+    // glitch, and the channel scores what it really hears.
+    let levels = await backend.playedLevels
+    #expect(levels == [-48, -48] + cleanLevels, "\(levels)")
+    #expect(result.chosen.index == expected.chosen.index)
+    #expect(result.channels.map(\.levelDbfs) == expected.channels.map(\.levelDbfs))
+    #expect(abs(result.chosen.confidence - expected.chosen.confidence) < 0.01)
+  }
+
+  @Test func theReplaysAreBoundedSoAGlitchingChannelStillClimbsToTheCeiling() async throws {
+    let loop = try #require(Self.scarlett.input?.channels.first { $0.name == "Loop 1" })
+    let backend = GlitchingProbeBackend(
+      scenario: Scenario(jitterFrames: 0, loopChannel: 7, seed: 3), glitches: 1_000)
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(backend: backend, setup: Self.setup, channels: [loop])
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    // Every probe glitched: never "only zeros", and nothing above the -18 dBFS ceiling.
+    #expect(thrown?.code == "nothingHeardAtCeiling")
+    let levels = await backend.playedLevels
+    let perLevel = 1 + LevelRamp.maxGlitchRetries
+    #expect(levels == [-48, -36, -24, -18].flatMap { Array(repeating: $0, count: perLevel) })
+  }
+
+  @Test func deadChannelsWithAGlitchAreStillDigitalSilence() async throws {
+    // A glitched probe used to count as heard, turning dead channels into nothingHeard.
+    let backend = GlitchingProbeBackend(
+      scenario: Scenario(jitterFrames: 0, inputZeros: true, seed: 3), glitches: 1)
+    var thrown: SoundPingError?
+    do {
+      _ = try await ChannelProbe().run(
+        backend: backend, setup: Self.setup,
+        channels: Array((Self.scarlett.input?.channels ?? []).prefix(2)))
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    #expect(thrown?.code == "inputDigitalSilence")
   }
 
   @Test func aSourceThatIsAllZerosOnEveryChannelIsDigitalSilence() async throws {
