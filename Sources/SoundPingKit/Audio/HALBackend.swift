@@ -14,8 +14,13 @@ import Synchronization
 /// per-process buffer size (RESEARCH P1). The nominal sample rate, volume, mute, data source and
 /// the system defaults belong to the user.
 public final class HALBackend: AudioBackend {
-  public let events: AsyncStream<DeviceEvent>
-  private let eventSink: AsyncStream<DeviceEvent>.Continuation
+  /// The device events of the current open. `stop()` ends the stream, and `open()` after a `stop()`
+  /// makes a fresh one, so a backend that is used again (the channel probe opens the same one per
+  /// channel) never hands out a finished stream. Read it after `open()`.
+  public var events: AsyncStream<DeviceEvent> { state.withLock { $0.eventStream } }
+  private var eventSink: AsyncStream<DeviceEvent>.Continuation {
+    state.withLock { $0.eventSink }
+  }
   private let state = Mutex<State>(State())
 
   /// How long `start()` waits for the first audio callbacks before it gives up.
@@ -50,19 +55,33 @@ public final class HALBackend: AudioBackend {
     var stallReported = false
     var stopped = false
     var listeners: DeviceListeners?
+    var eventStream: AsyncStream<DeviceEvent>
+    var eventSink: AsyncStream<DeviceEvent>.Continuation
+
+    init() {
+      (eventStream, eventSink) = AsyncStream<DeviceEvent>.makeStream()
+    }
+
+    /// The start of an open: per-open bookkeeping goes back to zero, and an open after a `stop()`
+    /// gets a stream that is not finished.
+    mutating func beginOpen() {
+      if stopped {
+        (eventStream, eventSink) = AsyncStream<DeviceEvent>.makeStream()
+      }
+      stopped = false
+      gapsReported = 0
+      stallReported = false
+    }
   }
 
-  public init() {
-    let (stream, continuation) = AsyncStream<DeviceEvent>.makeStream()
-    events = stream
-    eventSink = continuation
-  }
+  public init() {}
 
   // MARK: Opening
 
   public func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws
     -> BackendInfo
   {
+    state.withLock { $0.beginOpen() }
     let listing = try HALDeviceCatalog().listing()
     let outInfo = try Self.find(setup.output, in: listing, role: "output")
     let inInfo = try Self.find(setup.input, in: listing, role: "input")

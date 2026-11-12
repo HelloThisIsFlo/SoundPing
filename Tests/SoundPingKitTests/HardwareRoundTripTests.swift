@@ -1,5 +1,6 @@
 import CoreAudio
 import Foundation
+import Synchronization
 import Testing
 
 @testable import SoundPingKit
@@ -82,6 +83,31 @@ struct HardwareRoundTripTests {
     #expect(
       abs(medians[0] - medians[1]) <= 2,
       "medians \(medians) differ by more than 2 frames")
+  }
+
+  /// The channel probe opens one backend per channel: a reopened backend must hand out a live
+  /// event stream again (IN-09), and the old stream stays finished.
+  @Test func aReopenedBackendHasALiveEventStream() async throws {
+    let setup = try Self.resolveSetup()
+    let nominal = try StimulusLibrary.template(id: "chirp-loopback", sampleRate: 48_000)
+    let backend = HALBackend()
+    _ = try await backend.open(setup, templates: [nominal])
+    let first = backend.events
+    await backend.stop()
+    for await _ in first {}  // returns only because stop() finished the stream
+
+    _ = try await backend.open(setup, templates: [nominal])
+    let second = backend.events
+    let ended = Mutex(false)
+    let watcher = Task {
+      for await _ in second {}
+      ended.withLock { $0 = true }
+    }
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(!ended.withLock { $0 }, "the stream of a reopened backend must not be finished")
+    await backend.stop()
+    _ = await watcher.value
+    #expect(ended.withLock { $0 }, "stop ends the stream of the open it belongs to")
   }
 
   /// Every listener registers on a real device and is gone again afterwards, and watching a device
