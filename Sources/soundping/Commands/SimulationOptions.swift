@@ -45,8 +45,9 @@ struct SimulationOptions: ParsableArguments {
   var simNoise: Double = 0.001
 
   @Option(
+    parsing: .unconditional,
     help:
-      "Simulated path gain in dB. The converter clamps at full scale, so a large value clips."
+      "Simulated path gain in dB (may be negative). The converter clamps at full scale, so a large value clips."
   )
   var simGainDb: Double = 0
 
@@ -82,12 +83,39 @@ struct SimulationOptions: ParsableArguments {
   )
   var simFault: [String] = []
 
+  @Option(
+    help:
+      "The microphone permission the simulated process holds: authorized, denied or restricted. Denied and restricted make the capture all zeros, as macOS does."
+  )
+  var simPermission = "authorized"
+
+  @Flag(help: "The simulated input delivers exact zeros whatever is played, like a dead source.")
+  var simInputZeros = false
+
+  @Flag(help: "The simulated output reports itself muted.")
+  var simMuted = false
+
+  @Option(
+    help:
+      "The 1-based input channel the simulated stimulus comes back on; every other channel hears only noise. Without it every channel hears the stimulus."
+  )
+  var simLoopChannel: Int?
+
   func scenario(seed: UInt64, bufferFrames: Int = 128) throws -> Scenario {
-    Scenario(
+    guard let permission = PermissionStatus(rawValue: simPermission),
+      permission != .notDetermined
+    else {
+      throw SoundPingError.usage(
+        "invalidParameters",
+        "--sim-permission takes authorized, denied or restricted; got '\(simPermission)'",
+        context: ["parameter": "sim-permission", "value": simPermission])
+    }
+    return Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
       pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
       xrunHits: simXrun.values,
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
-      faults: try simFault.map(Fault.parse), seed: seed)
+      faults: try simFault.map(Fault.parse), permission: permission, inputZeros: simInputZeros,
+      outputMuted: simMuted, loopChannel: simLoopChannel, seed: seed)
   }
 }

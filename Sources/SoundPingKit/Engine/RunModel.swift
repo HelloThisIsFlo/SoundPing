@@ -230,6 +230,8 @@ public struct RunResult: Codable, Sendable, Equatable {
   public var reported: ReportedLatency?
   /// The round-trip calibration this run produced, or `stored: false` when it failed the valid-hit gate (CAL-02).
   public var calibration: CalibrationRef?
+  /// What the checks before the first hit found: permission, listener, ramp and locked level (ENG-03).
+  public var preflight: PreflightReport?
 
   public init(
     schemaVersion: Int = RunResult.currentSchemaVersion,
@@ -253,7 +255,8 @@ public struct RunResult: Codable, Sendable, Equatable {
     selfTest: ClockSelfTestResult? = nil,
     hostTimebase: HostTimebase? = nil,
     reported: ReportedLatency? = nil,
-    calibration: CalibrationRef? = nil
+    calibration: CalibrationRef? = nil,
+    preflight: PreflightReport? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.runId = runId
@@ -277,6 +280,7 @@ public struct RunResult: Codable, Sendable, Equatable {
     self.hostTimebase = hostTimebase
     self.reported = reported
     self.calibration = calibration
+    self.preflight = preflight
   }
 }
 
@@ -296,6 +300,10 @@ public struct ArmedInfo: Codable, Sendable, Equatable {
 }
 
 public enum RunEvent: Sendable, Equatable {
+  /// One uncounted test sound of the level ramp, before the level is locked.
+  case probe(ProbeRecord)
+  /// The ramp found the level every hit of this run plays at; the last event before `armed`.
+  case levelLocked(LevelLock)
   case armed(ArmedInfo)
   case hit(HitRecord)
   case rejected(HitRecord)
@@ -311,6 +319,12 @@ extension RunEvent: Codable {
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: Key.self)
     switch self {
+    case .probe(let record):
+      try container.encode("probe", forKey: .type)
+      try record.encode(to: encoder)
+    case .levelLocked(let lock):
+      try container.encode("levelLocked", forKey: .type)
+      try lock.encode(to: encoder)
     case .armed(let info):
       try container.encode("armed", forKey: .type)
       try info.encode(to: encoder)
@@ -336,6 +350,8 @@ extension RunEvent: Codable {
     let container = try decoder.container(keyedBy: Key.self)
     let type = try container.decode(String.self, forKey: .type)
     switch type {
+    case "probe": self = .probe(try ProbeRecord(from: decoder))
+    case "levelLocked": self = .levelLocked(try LevelLock(from: decoder))
     case "armed": self = .armed(try ArmedInfo(from: decoder))
     case "hit": self = .hit(try HitRecord(from: decoder))
     case "rejected": self = .rejected(try HitRecord(from: decoder))

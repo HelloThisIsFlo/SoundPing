@@ -14,8 +14,25 @@ struct RunOptions: ParsableArguments {
   @Option(help: "Random seed. A random one is drawn and recorded when omitted.")
   var seed: UInt64?
 
-  @Option(help: "Stimulus level in dBFS. Default: the recipe's start level.")
+  @Option(
+    parsing: .unconditional,
+    help:
+      "Test-sound level in dBFS, confirmed by one probe. Default: found by a ramp that starts at -48 dBFS and steps up 6 dB until the chirp is heard, never above the listener's ceiling."
+  )
   var level: Double?
+
+  @Option(
+    parsing: .unconditional,
+    help:
+      "The loudest test sound allowed, in dBFS (0 or below). Replaces the listener's ceiling: loopback -6, speakers -12, headphones -30, unknown -18. The only way to go louder than that."
+  )
+  var maxLevel: Double?
+
+  @Option(
+    help:
+      "Who hears the test sound: loopback, speaker, headphones or unknown. Default: worked out from the devices. It sets the ceiling and, without --template, the chirp band."
+  )
+  var listener: String?
 
   @Option(help: "Stimulus template id. Available: \(StimulusLibrary.ids.joined(separator: ", ")).")
   var template: String?
@@ -145,11 +162,42 @@ struct RunOptions: ParsableArguments {
       guard !name.trimmingCharacters(in: .whitespaces).isEmpty else {
         throw SoundPingError.usage("invalidSetupName", "--save-setup needs a non-empty name")
       }
-      var file = saved ?? SetupsFile()
-      file.setups[name] = SetupBinding(resolved: resolved)
-      try Setups.save(file, to: paths.setups)
+      // With `--in-channel auto` the channel is not known yet; the probe saves it once it is.
+      if !resolved.autoInChannel { try persistSetup(resolved, as: name) }
     }
     return resolved
+  }
+
+  private func storePaths() throws -> StorePaths {
+    try StorePaths.resolve(flag: store, environment: ProcessInfo.processInfo.environment)
+  }
+
+  /// Writes the resolved devices and channels into setups.json under `name`.
+  func persistSetup(_ resolved: ResolvedSetup, as name: String) throws {
+    let paths = try storePaths()
+    var file = try Setups.load(from: paths.setups)
+    file.setups[name] = SetupBinding(resolved: resolved)
+    try Setups.save(file, to: paths.setups)
+  }
+
+  /// Changes only the input channel of a setup that already exists.
+  func updateSetupChannel(_ channel: Int, in name: String) throws {
+    let paths = try storePaths()
+    var file = try Setups.load(from: paths.setups)
+    guard var binding = file.setups[name] else {
+      throw SoundPingError.usage(
+        "unknownSetup", "no saved setup named '\(name)'", context: ["setup": name])
+    }
+    binding.inChannel = channel
+    file.setups[name] = binding
+    try Setups.save(file, to: paths.setups)
+  }
+
+  /// The input channels of the resolved input device, for `--in-channel auto` to probe.
+  func inputChannels(of setup: ResolvedSetup, simulated: Bool) throws -> [ChannelInfo] {
+    let catalog: any DeviceCatalog = simulated ? SimulatedCatalog() : HALDeviceCatalog()
+    let device = try catalog.listing().audio.first { $0.uid == setup.input.uid }
+    return device?.input?.channels ?? []
   }
 
   private func parsedOutChannels() throws -> [Int]? {
@@ -183,6 +231,26 @@ struct RunOptions: ParsableArguments {
       parameters.templateId = template
     }
     return RunRequest(
-      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags)
+      recipe: recipe, parameters: parameters, setup: setup, label: label, tags: uniqueTags,
+      preflight: try preflightOptions())
+  }
+
+  /// `--max-level`, `--listener` and whether `--template` was named, checked before anything plays.
+  func preflightOptions() throws -> PreflightOptions {
+    var kind: ListenerKind?
+    if let listener {
+      guard let parsed = ListenerKind(rawValue: listener) else {
+        throw SoundPingError.usage(
+          "invalidParameters",
+          "--listener takes \(ListenerKind.allCases.map(\.rawValue).joined(separator: ", ")); got '\(listener)'",
+          context: ["parameter": "listener", "value": listener])
+      }
+      kind = parsed
+    }
+    if let maxLevel {
+      _ = try LevelRamp.resolveCeiling(kind: kind ?? .unknown, maxLevelDbfs: maxLevel)
+    }
+    return PreflightOptions(
+      maxLevelDbfs: maxLevel, listener: kind, templateFollowsListener: template == nil)
   }
 }

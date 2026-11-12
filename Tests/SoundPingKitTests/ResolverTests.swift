@@ -258,12 +258,26 @@ import Testing
     #expect(error?.code == "invalidChannel")
   }
 
-  @Test func autoIsNotAvailableYet() throws {
-    let error = failure {
-      _ = try hardwareResolver().resolve(
-        SetupSelectors(output: "uid-scarlett", input: "uid-scarlett", inChannel: "auto"))
-    }
-    #expect(error?.code == "inChannelAutoUnavailable")
+  @Test func autoLeavesTheChannelUnresolvedAndFlagsItForTheProbe() throws {
+    let resolved = try hardwareResolver().resolve(
+      SetupSelectors(output: "uid-scarlett", input: "uid-scarlett", inChannel: "auto"))
+    #expect(resolved.autoInChannel)
+    #expect(resolved.inChannel == 0, "unresolved until the probe has heard the chirp")
+    #expect(resolved.inChannelName == nil)
+    #expect(resolved.input.uid == "uid-scarlett")
+
+    let numbered = try hardwareResolver().resolve(
+      SetupSelectors(output: "uid-scarlett", input: "uid-scarlett", inChannel: "1"))
+    #expect(!numbered.autoInChannel)
+    #expect(numbered.inChannel == 1)
+  }
+
+  @Test func autoBeatsAChannelStoredInASavedSetup() throws {
+    let resolved = try hardwareResolver(
+      midi: MIDIListing(destinations: [midiEndpoint(77, "Piano")]), setups: benchSetups()
+    ).resolve(SetupSelectors(setup: "bench", inChannel: "auto"))
+    #expect(resolved.autoInChannel)
+    #expect(resolved.inChannel == 0)
   }
 
   // MARK: Named setups (D-09)

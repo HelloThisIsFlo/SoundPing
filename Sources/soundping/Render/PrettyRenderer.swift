@@ -15,6 +15,45 @@ struct PrettyRenderer {
 
   // MARK: live lines
 
+  /// One level-ramp probe: dimmed, because it is a throwaway and no hit.
+  func probeLine(_ probe: ProbeRecord) -> String {
+    dim(
+      String(
+        format: "probe %4.0f dBFS  conf %.2f  peak %6.1f dBFS", probe.levelDbfs, probe.confidence,
+        probe.peakDbfs))
+  }
+
+  /// The level every hit of the run plays at, and why it is no louder.
+  func lockLine(_ lock: LevelLock) -> String {
+    String(
+      format: "Level locked at %.0f dBFS (%@, ceiling %.0f dBFS)", lock.levelDbfs,
+      lock.listenerKind.rawValue, lock.ceilingDbfs)
+  }
+
+  /// The ranked input channels of `--in-channel auto`, the winner marked, and how to keep it.
+  func channelProbeReport(_ result: ChannelProbeResult) -> String {
+    var lines = ["Input channels, best first"]
+    for score in result.channels {
+      let mark = score.index == result.chosen.index ? "→" : " "
+      lines.append(
+        String(
+          format: "%@ %3d  %@ conf %.2f  at %.0f dBFS", mark, score.index,
+          score.name.padded(to: 12), score.confidence, score.levelDbfs))
+    }
+    let chosen = result.chosen
+    lines.append("")
+    lines.append(
+      String(
+        format: "Chosen: channel %d (%@), confidence %.2f, margin %.2f over the runner-up",
+        chosen.index, chosen.name, chosen.confidence, chosen.margin))
+    if result.saved {
+      lines.append("Saved the channel in the setup.")
+    } else if let hint = result.saveHint {
+      lines.append(hint)
+    }
+    return lines.joined(separator: "\n")
+  }
+
   /// One line before the first hit: what is about to be measured.
   func armedLine(_ info: ArmedInfo) -> String {
     let setup = info.setup
@@ -80,6 +119,9 @@ struct PrettyRenderer {
       lines.append("no valid hits: nothing to report")
     }
 
+    if let warnings = result.preflight?.warnings, !warnings.isEmpty {
+      lines.append("Preflight: " + warnings.joined(separator: "; "))
+    }
     if let selfTest = result.selfTest { lines.append(selfTestLine(selfTest)) }
     lines.append(contentsOf: reportedVersusMeasured(result))
 

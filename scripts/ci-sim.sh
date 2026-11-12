@@ -53,9 +53,10 @@ assert record["kind"] == "roundTrip" and record["label"] == "round trip", record
 assert record["key"]["sampleRate"] == 48000 and record["key"]["bufferFrames"] == 128, record["key"]
 ' "$STORE"
 
-# --ndjson (D-03): every stdout line is one JSON event, armed first, finished last, the 25
-# hit/rejected lines (5 warm-ups + 20 measured) in strictly increasing index order, and the
-# finished line equals the saved run.json. Nothing else may reach stdout.
+# --ndjson (D-03): every stdout line is one JSON event. The stream opens with the level probes,
+# exactly one levelLocked, then armed (the preflight, ENG-03); finished is last; the 25 hit/rejected
+# lines (5 warm-ups + 20 measured) come in strictly increasing index order; and the finished line
+# equals the saved run.json. Nothing else may reach stdout.
 "$BIN" run round-trip --simulate --seed 7 --hits 20 --ndjson --store "$STORE2" >"$NDJSON"
 
 python3 -c '
@@ -63,16 +64,24 @@ import json, sys
 lines = open(sys.argv[1]).read().split("\n")
 assert lines[-1] == "", "stdout must end with a newline"
 events = [json.loads(line) for line in lines[:-1]]
-assert events[0]["type"] == "armed", events[0]["type"]
+types = [e["type"] for e in events]
+opening = 0
+while types[opening] == "probe":
+    opening += 1
+assert opening >= 1, types[:3]
+assert types[opening] == "levelLocked" and types[opening + 1] == "armed", types[: opening + 3]
+assert types.count("levelLocked") == 1 and types.count("armed") == 1, types
+assert all(e["index"] < 0 for e in events if e["type"] == "probe"), "probes carry negative indices"
 assert events[-1]["type"] == "finished", events[-1]["type"]
 hits = [e for e in events if e["type"] in ("hit", "rejected")]
 assert len(hits) == 25, len(hits)
 indices = [e["index"] for e in hits]
 assert all(a < b for a, b in zip(indices, indices[1:])), indices
-# A same-device run proves its clock before it finishes: armed, 25 hits, selfTest, finished.
+# A same-device run proves its clock before it finishes: probes, levelLocked, armed, 25 hits,
+# selfTest, finished.
 assert events[-2]["type"] == "selfTest", events[-2]["type"]
 assert events[-2]["pass"] is True, events[-2]
-assert len(events) == 28, len(events)
+assert len(events) == opening + 1 + 1 + 25 + 1 + 1, len(events)
 result = events[-1]["result"]
 assert result["selfTest"]["pass"] is True, result["selfTest"]
 saved = json.load(open(result["runPath"] + "/run.json"))
@@ -151,6 +160,9 @@ result = json.load(open(out))
 path = result["measured"]["path"]
 assert path["valid"] == valid and path["n"] == 20, path
 assert (path.get("median") is None) == (valid == 0), path
+# The ramp locks on probes the missed-hit knob cannot reach, so a run with every hit missed is a
+# gate failure (exit 3), never a preflight one (exit 65).
+assert result["preflight"]["lockedLevelDbfs"] is not None, result["preflight"]
 saved = result["runPath"] + "/run.json"
 assert os.path.isfile(saved), saved
 assert open(out).read() == open(saved).read(), "stdout differs from run.json"
@@ -209,5 +221,55 @@ assert result["rejectedCounts"]["discontinuity"] == 1, result["rejectedCounts"]
 assert result["measured"]["path"]["valid"] == 19, result["measured"]["path"]
 assert result["simulation"]["faults"] == [{"kind": "overload", "atHit": 12}], result["simulation"]
 ' "$WORK/overload.out"
+
+# Preflight (ENG-03): a denied microphone is silence on macOS, so the run stops before any hit with
+# exit 65 and names the app that owns the permission.
+expect_failure "denied microphone" 65 micPermissionDenied run round-trip --simulate --sim-permission denied --store "$WORK/store-denied"
+python3 -c '
+import json, sys
+e = json.load(open(sys.argv[1]))
+assert e["kind"] == "preflight", e
+assert e["terminalApp"], e
+assert e["detectedVia"], e
+assert "Privacy & Security" in e["fix"] and e["terminalApp"] in e["fix"], e
+' "$WORK/failure.out"
+[ -z "$(find "$WORK/store-denied/runs" -name run.json 2>/dev/null)" ] || { echo "ci-sim: a refused run left a run.json" >&2; exit 1; }
+
+# The level ramp (D-14): -48 dBFS first, locked at or below the ceiling, probes kept out of hits[],
+# and five warm-ups after the lock.
+"$BIN" run round-trip --simulate --seed 5 --hits 20 --json --store "$WORK/store-ramp" >"$WORK/ramp.out"
+python3 -c '
+import json, sys
+r = json.load(open(sys.argv[1]))
+p = r["preflight"]
+assert p["probes"][0]["levelDbfs"] == -48, p["probes"]
+assert p["lockedLevelDbfs"] <= p["ceilingDbfs"], p
+assert all(h["phase"] != "probe" for h in r["hits"]), "a probe leaked into hits[]"
+assert sum(1 for h in r["hits"] if h["phase"] == "warmup") == 5, r["hits"][:6]
+assert r["parameters"]["templateId"] == p["templateId"] == "chirp-loopback", p
+' "$WORK/ramp.out"
+
+# Named preflight causes (ENG-03), all exit 65.
+expect_failure "all-zero input" 65 inputDigitalSilence run round-trip --simulate --sim-input-zeros --store "$WORK/store-zeros"
+expect_failure "clipping input" 65 inputClipping run round-trip --simulate --sim-gain-db 66 --store "$WORK/store-clip"
+expect_failure "deaf path" 65 nothingHeardAtCeiling run round-trip --simulate --sim-gain-db -80 --store "$WORK/store-deaf"
+expect_failure "muted output" 65 outputMuted run round-trip --simulate --sim-muted --store "$WORK/store-muted"
+
+# --in-channel auto (D-11) is a probe: it finds the channel that hears the chirp, saves it into the
+# setup on request, and never writes a run or a hit.
+"$BIN" run round-trip --simulate --output scarlett --input scarlett --in-channel auto \
+  --sim-loop-channel 7 --save-setup bench --json --store "$WORK/store-auto" >"$WORK/auto.out"
+python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["type"] == "channelProbe" and d["schemaVersion"] == 1, d
+assert d["chosen"]["index"] == 7 and d["chosen"]["name"] == "Loop 1", d["chosen"]
+assert d["chosen"]["confidence"] >= 0.9 and d["chosen"]["margin"] >= 0.2, d["chosen"]
+assert d["saved"] is True and len(d["channels"]) == 10, d
+saved = json.load(open(sys.argv[2] + "/setups.json"))
+assert saved["setups"]["bench"]["inChannel"] == 7, saved
+' "$WORK/auto.out" "$WORK/store-auto"
+[ -z "$(ls -A "$WORK/store-auto/runs" 2>/dev/null)" ] || { echo "ci-sim: the channel probe left a run behind" >&2; exit 1; }
+expect_failure "ambiguous channels" 65 inChannelAmbiguous run round-trip --simulate --output scarlett --input scarlett --in-channel auto --store "$WORK/store-auto-ambiguous"
 
 echo "ci-sim: OK"

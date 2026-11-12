@@ -8,7 +8,7 @@ public struct RunParameters: Codable, Sendable, Equatable {
   public var maxLatencyMs: Double
   public var seed: UInt64
   public var templateId: String
-  /// nil = the recipe's `startLevelDbfs` until the D-14 level ramp lands.
+  /// nil = find the level with the preflight ramp (D-14); a value is confirmed with one probe.
   public var levelDbfs: Double?
   public var minValidFraction: Double
 
@@ -82,6 +82,9 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
   public var setupName: String?
   public var midiOut: MIDIRef?
   public var warnings: [String]
+  /// `--in-channel auto` was asked for: `inChannel` is 0 (unresolved) and the caller must probe the
+  /// input device for the channel that hears the chirp before anything is measured (D-11).
+  public var autoInChannel: Bool
 
   public init(
     output: DeviceRef,
@@ -93,7 +96,8 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
     requestedBufferFrames: Int? = nil,
     setupName: String? = nil,
     midiOut: MIDIRef? = nil,
-    warnings: [String] = []
+    warnings: [String] = [],
+    autoInChannel: Bool = false
   ) {
     self.output = output
     self.input = input
@@ -105,6 +109,7 @@ public struct ResolvedSetup: Codable, Sendable, Equatable {
     self.setupName = setupName
     self.midiOut = midiOut
     self.warnings = warnings
+    self.autoInChannel = autoInChannel
   }
 }
 
@@ -114,18 +119,21 @@ public struct RunRequest: Sendable {
   public var setup: ResolvedSetup
   public var label: String?
   public var tags: [String]
+  public var preflight: PreflightOptions
 
   public init(
     recipe: Recipe,
     parameters: RunParameters,
     setup: ResolvedSetup,
     label: String? = nil,
-    tags: [String] = []
+    tags: [String] = [],
+    preflight: PreflightOptions = PreflightOptions()
   ) {
     self.recipe = recipe
     self.parameters = parameters
     self.setup = setup
     self.label = label
     self.tags = tags
+    self.preflight = preflight
   }
 }

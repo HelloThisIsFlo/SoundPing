@@ -4,16 +4,36 @@ import Testing
 @testable import SoundPingKit
 
 /// The event stream every renderer and the later app read (ENG-02): order, adjacency and the
-/// empty case. Written for the stream as it is before the preflight plan (01-08) adds probe and
-/// levelLocked events ahead of `armed`; that plan updates the first-event assertions.
+/// empty case. A run opens with its level probes, then exactly one `levelLocked`, then `armed`
+/// (the preflight, 01-08), then one hit or rejected event per warm-up and measured hit, then
+/// `finished`.
 @Suite struct RunStreamTests {
   private struct Collected {
     var events: [RunEvent]
     var store: RunStore
 
     var armed: ArmedInfo? {
-      if case .armed(let info) = events.first { return info }
+      for case .armed(let info) in events { return info }
       return nil
+    }
+
+    /// The probe events before the lock, the lock itself, and `armed`: the opening of every run.
+    var probeCount: Int {
+      events.prefix { if case .probe = $0 { return true } else { return false } }.count
+    }
+
+    var lockCount: Int {
+      events.filter { if case .levelLocked = $0 { return true } else { return false } }.count
+    }
+
+    /// True when the stream opens with probes, then the lock, then `armed`.
+    var opensWithProbesLockAndArmed: Bool {
+      let opening = probeCount
+      guard events.count > opening + 1 else { return false }
+      guard case .levelLocked = events[opening], case .armed = events[opening + 1] else {
+        return false
+      }
+      return true
     }
 
     var finished: RunResult? {
@@ -60,10 +80,13 @@ import Testing
       Scenario(jitterFrames: 0.5, seed: 7), hits: 20, warmup: 5)
     defer { Self.cleanUp(collected) }
 
-    #expect(collected.armed != nil, "the first event is armed")
+    #expect(collected.armed != nil)
+    #expect(collected.probeCount >= 1, "the stream opens with at least one probe")
+    #expect(collected.lockCount == 1, "exactly one levelLocked")
+    #expect(collected.opensWithProbesLockAndArmed, "probes, then levelLocked, then armed")
     let result = try #require(collected.finished, "the last event is finished")
-    // armed, 25 hits, the same-device clock self-test, finished.
-    #expect(collected.events.count == 28)
+    // probes, levelLocked, armed, 25 hits, the same-device clock self-test, finished.
+    #expect(collected.events.count == collected.probeCount + 1 + 1 + 25 + 1 + 1)
     if case .selfTest(let selfTest) = collected.events[collected.events.count - 2] {
       #expect(selfTest.pass)
     } else {
@@ -89,6 +112,9 @@ import Testing
     defer { Self.cleanUp(collected) }
 
     #expect(collected.armed != nil)
+    #expect(
+      collected.opensWithProbesLockAndArmed, "the ramp locks on probes no missed-hit knob reaches")
+    #expect(collected.lockCount == 1)
     let result = try #require(collected.finished)
 
     let rejected = collected.events.compactMap { event -> HitRecord? in
