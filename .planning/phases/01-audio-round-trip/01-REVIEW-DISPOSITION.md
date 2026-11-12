@@ -3,6 +3,46 @@ phase: 01
 review: 01-REVIEW.md
 titles: json
 findings:
+  - id: CR-04
+    severity: critical
+    disposition: open
+    title: "A virtual output is now a \"loopback\" whatever the input: a mic run through a monitored virtual device can ramp to -6 dBFS (regression from the CR-03 fix)"
+  - id: WR-13
+    severity: warning
+    disposition: open
+    title: "`--listener` lifts the headphone and Bluetooth ceiling without `--max-level`, though the help says `--max-level` is the only way"
+  - id: WR-14
+    severity: warning
+    disposition: open
+    title: "A headphone plug-in during a run is not watched: a built-in output locked at the speaker level keeps playing into the ears"
+  - id: IN-15
+    severity: info
+    disposition: open
+    title: "The stack documentation still lists swift-log as a shipped, always-used dependency (IN-05 residual)"
+  - id: IN-16
+    severity: info
+    disposition: open
+    title: "A wrapped ring's \"forgotten\" range is bounded by retained lower bounds, and the oldest slot can be read torn"
+  - id: IN-17
+    severity: info
+    disposition: open
+    title: "A backward sample-time jump moves the published label backwards and poisons everything below the old position"
+  - id: IN-18
+    severity: info
+    disposition: open
+    title: "The overload interval and the settle are sized from the buffer requested at open, not the one the device settled on"
+  - id: IN-19
+    severity: info
+    disposition: open
+    title: "The channel probe treats a glitched probe as heard and climbs 12 dB on it (IN-01 residual)"
+  - id: IN-20
+    severity: info
+    disposition: open
+    title: "Reopen is fixed for HAL open → stop → open only: the simulator's stream stays finished, and open → open leaks running IOProcs (IN-09 residual)"
+  - id: IN-21
+    severity: info
+    disposition: open
+    title: "Already-defended-elsewhere: the label loads in `RTState.faults` are discarded and add no ordering"
   - id: CR-03
     severity: critical
     disposition: fixed
@@ -119,33 +159,43 @@ findings:
     severity: warning
     disposition: fixed
     title: "`bench.sh` aborts on any run with zero valid hits"
-open: 0
-total: 29
-recorded: 2026-11-12T19:38:47.775Z
+open: 10
+total: 39
+recorded: 2026-11-12T19:48:52.833Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-03 | critical | fixed | 01-REVIEW-FIX.md |
-| WR-01 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-03 | warning | fixed | 01-REVIEW-FIX.md |
-| IN-02 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-12 | warning | fixed | 01-REVIEW-FIX.md |
-| IN-01 | info | fixed | 01-REVIEW-FIX.md |
-| IN-03 | info | fixed | 01-REVIEW-FIX.md |
-| IN-04 | info | fixed | 01-REVIEW-FIX.md |
-| IN-05 | info | fixed | 01-REVIEW-FIX.md |
-| IN-06 | info | fixed | 01-REVIEW-FIX.md |
-| IN-07 | info | fixed | 01-REVIEW-FIX.md |
-| IN-08 | info | fixed | 01-REVIEW-FIX.md |
-| IN-09 | info | fixed | 01-REVIEW-FIX.md |
-| IN-10 | info | fixed | 01-REVIEW-FIX.md |
-| IN-11 | info | fixed | 01-REVIEW-FIX.md |
-| IN-12 | info | fixed | 01-REVIEW-FIX.md |
-| IN-13 | info | fixed | 01-REVIEW-FIX.md |
-| IN-14 | info | fixed | 01-REVIEW-FIX.md |
+| CR-04 | critical | open | - |
+| WR-13 | warning | open | - |
+| WR-14 | warning | open | - |
+| IN-15 | info | open | - |
+| IN-16 | info | open | - |
+| IN-17 | info | open | - |
+| IN-18 | info | open | - |
+| IN-19 | info | open | - |
+| IN-20 | info | open | - |
+| IN-21 | info | open | - |
+| CR-03 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-01 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-03 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-02 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| WR-12 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-01 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-03 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-04 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-05 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-06 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-07 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-08 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-09 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-10 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-11 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-12 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-13 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
+| IN-14 | info | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | CR-01 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | CR-02 | critical | fixed | 01-REVIEW-FIX.md (not in the current review) |
 | WR-02 | warning | fixed | 01-REVIEW-FIX.md (not in the current review) |
