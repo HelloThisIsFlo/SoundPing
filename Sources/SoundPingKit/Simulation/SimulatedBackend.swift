@@ -93,6 +93,9 @@ public struct Scenario: Codable, Sendable, Equatable {
   public var ioOffsetFrames: Int
   /// Device changes injected into the run, each at a hit index.
   public var faults: [Fault]
+  /// The microphone permission the simulated process holds. Denied and restricted make the
+  /// capture all zeros, which is what macOS does to a real process without consent.
+  public var permission: PermissionStatus
   public var seed: UInt64
 
   public init(
@@ -108,6 +111,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     stampBiasFrames: Double = 0,
     ioOffsetFrames: Int? = nil,
     faults: [Fault] = [],
+    permission: PermissionStatus = .authorized,
     seed: UInt64
   ) {
     self.latencyFrames = latencyFrames
@@ -122,6 +126,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     self.stampBiasFrames = stampBiasFrames
     self.ioOffsetFrames = ioOffsetFrames ?? 2 * bufferFrames + 28
     self.faults = faults
+    self.permission = permission
     self.seed = seed
   }
 
@@ -141,6 +146,7 @@ public struct Scenario: Codable, Sendable, Equatable {
     ioOffsetFrames =
       try c.decodeIfPresent(Int.self, forKey: .ioOffsetFrames) ?? 2 * bufferFrames + 28
     faults = try c.decodeIfPresent([Fault].self, forKey: .faults) ?? []
+    permission = try c.decodeIfPresent(PermissionStatus.self, forKey: .permission) ?? .authorized
     seed = try c.decode(UInt64.self, forKey: .seed)
   }
 }
@@ -415,6 +421,10 @@ public actor SimulatedBackend: AudioBackend {
 
     // A converter cannot go past full scale.
     for offset in 0..<count { out[offset] = Swift.max(-1, Swift.min(1, out[offset])) }
+    // Without consent the system hands a process exact zeros, not an error.
+    if scenario.permission == .denied || scenario.permission == .restricted {
+      out = [Float](repeating: 0, count: count)
+    }
     return out
   }
 
@@ -459,6 +469,8 @@ public actor SimulatedBackend: AudioBackend {
   }
 
   public func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+
+  public func permissionStatus() async -> PermissionStatus { scenario.permission }
 
   public func stop() async {
     started = false

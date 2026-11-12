@@ -6,16 +6,24 @@ import Synchronization
 public actor RunCoordinator {
   private let backend: any AudioBackend
   private let store: RunStore
+  private let resolver: any ResponsibleAppResolving
 
-  public init(backend: any AudioBackend, store: RunStore) {
+  /// `resolver` names the app that owns microphone consent when a run is refused for lack of it;
+  /// tests pass a fake, everything else the process-tree walk.
+  public init(
+    backend: any AudioBackend, store: RunStore,
+    resolver: any ResponsibleAppResolving = ProcessTreeResolver()
+  ) {
     self.backend = backend
     self.store = store
+    self.resolver = resolver
   }
 
   public nonisolated func run(_ request: RunRequest) -> AsyncThrowingStream<RunEvent, Error> {
     AsyncThrowingStream(RunEvent.self) { continuation in
       let session = Session(
-        backend: backend, store: store, request: request, continuation: continuation)
+        backend: backend, store: store, request: request, resolver: resolver,
+        continuation: continuation)
       let task = Task {
         do {
           try await session.run()
@@ -53,6 +61,7 @@ private struct Session: Sendable {
   let backend: any AudioBackend
   let store: RunStore
   let request: RunRequest
+  let resolver: any ResponsibleAppResolving
   let continuation: AsyncThrowingStream<RunEvent, Error>.Continuation
 
   func run() async throws {
@@ -66,6 +75,7 @@ private struct Session: Sendable {
     let result: RunResult
     do {
       let info = try await backend.open(request.setup, templates: [nominal])
+      try await preflight()
       result = try await supervise(info: info, nominal: nominal)
       await backend.stop()
     } catch {
@@ -73,6 +83,16 @@ private struct Session: Sendable {
       throw error
     }
     continuation.yield(.finished(result))
+  }
+
+  /// The checks before any sound is played. A failure is announced on the stream, then thrown.
+  private func preflight() async throws {
+    do {
+      _ = try await Preflight(resolver: resolver).checkPermission(on: backend)
+    } catch let error as SoundPingError {
+      continuation.yield(.aborted(error))
+      throw error
+    }
   }
 
   /// Measures while listening for device events; a device change aborts the run (ENG-07).

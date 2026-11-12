@@ -100,7 +100,15 @@ public protocol AudioBackend: AnyObject, Sendable {
   /// third opinion next to our timeline. Nil when the backend has no such service; the simulator
   /// always returns nil.
   func halHostTime(forInputSample sample: Double) async -> UInt64?
+  /// The microphone permission of the process that owns consent. A real backend asks the user
+  /// first when they have not been asked; the simulator returns its scenario's answer.
+  func permissionStatus() async -> PermissionStatus
   var events: AsyncStream<DeviceEvent> { get }
   /// Idempotent; the coordinator calls it on every exit path.
   func stop() async
+}
+
+extension AudioBackend {
+  /// A backend with no permission model captures freely.
+  public func permissionStatus() async -> PermissionStatus { .authorized }
 }

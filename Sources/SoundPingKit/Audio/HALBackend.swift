@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreAudio
 import Foundation
 import Synchronization
@@ -337,6 +338,24 @@ public final class HALBackend: AudioBackend {
       Int(now) != reported
     {
       eventSink.yield(.bufferSizeChanged(uid: inputUID, from: reported, to: Int(now)))
+    }
+  }
+
+  /// Reads the microphone status of the app that owns consent and, when the user has not been
+  /// asked yet, asks now, so the prompt appears before the run and is attributed to that app. A
+  /// denied microphone does not fail anywhere else: macOS delivers all-zero buffers.
+  public func permissionStatus() async -> PermissionStatus {
+    var status = AVCaptureDevice.authorizationStatus(for: .audio)
+    if status == .notDetermined {
+      _ = await AVCaptureDevice.requestAccess(for: .audio)
+      status = AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+    switch status {
+    case .authorized: return .authorized
+    case .denied: return .denied
+    case .restricted: return .restricted
+    case .notDetermined: return .notDetermined
+    @unknown default: return .notDetermined
     }
   }
 

@@ -210,4 +210,17 @@ assert result["measured"]["path"]["valid"] == 19, result["measured"]["path"]
 assert result["simulation"]["faults"] == [{"kind": "overload", "atHit": 12}], result["simulation"]
 ' "$WORK/overload.out"
 
+# Preflight (ENG-03): a denied microphone is silence on macOS, so the run stops before any hit with
+# exit 65 and names the app that owns the permission.
+expect_failure "denied microphone" 65 micPermissionDenied run round-trip --simulate --sim-permission denied --store "$WORK/store-denied"
+python3 -c '
+import json, sys
+e = json.load(open(sys.argv[1]))
+assert e["kind"] == "preflight", e
+assert e["terminalApp"], e
+assert e["detectedVia"], e
+assert "Privacy & Security" in e["fix"] and e["terminalApp"] in e["fix"], e
+' "$WORK/failure.out"
+[ -z "$(find "$WORK/store-denied/runs" -name run.json 2>/dev/null)" ] || { echo "ci-sim: a refused run left a run.json" >&2; exit 1; }
+
 echo "ci-sim: OK"

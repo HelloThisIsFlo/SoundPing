@@ -82,12 +82,26 @@ struct SimulationOptions: ParsableArguments {
   )
   var simFault: [String] = []
 
+  @Option(
+    help:
+      "The microphone permission the simulated process holds: authorized, denied or restricted. Denied and restricted make the capture all zeros, as macOS does."
+  )
+  var simPermission = "authorized"
+
   func scenario(seed: UInt64, bufferFrames: Int = 128) throws -> Scenario {
-    Scenario(
+    guard let permission = PermissionStatus(rawValue: simPermission),
+      permission != .notDetermined
+    else {
+      throw SoundPingError.usage(
+        "invalidParameters",
+        "--sim-permission takes authorized, denied or restricted; got '\(simPermission)'",
+        context: ["parameter": "sim-permission", "value": simPermission])
+    }
+    return Scenario(
       latencyFrames: simLatency, jitterFrames: simJitter, noiseRms: simNoise,
       pathGainDb: simGainDb, bufferFrames: bufferFrames, missedHits: simMiss.values,
       xrunHits: simXrun.values,
       driftPPM: simDriftPpm, stampBiasFrames: simStampBias,
-      faults: try simFault.map(Fault.parse), seed: seed)
+      faults: try simFault.map(Fault.parse), permission: permission, seed: seed)
   }
 }

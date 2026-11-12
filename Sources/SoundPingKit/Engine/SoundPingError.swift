@@ -27,6 +27,13 @@ public struct SoundPingError: Error, Codable, Sendable, Equatable, CustomStringC
     SoundPingError(kind: .usage, code: code, detail: detail, context: context)
   }
 
+  /// A check before the run failed (exit 65).
+  public static func preflight(_ code: String, _ detail: String, context: [String: String] = [:])
+    -> SoundPingError
+  {
+    SoundPingError(kind: .preflight, code: code, detail: detail, context: context)
+  }
+
   public static func deviceChanged(
     _ code: String, _ detail: String, context: [String: String] = [:]
   ) -> SoundPingError {
