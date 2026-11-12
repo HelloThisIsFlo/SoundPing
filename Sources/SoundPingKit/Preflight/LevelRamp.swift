@@ -13,6 +13,9 @@ public struct LevelRamp: Sendable {
   public static let stepDownDb = 12.0
   public static let floorDbfs = -60.0
   public static let maxClippingRetries = 2
+  /// How often a probe spoilt by an audio glitch is replayed at the same level before the ramp
+  /// takes its answer as it is.
+  public static let maxGlitchRetries = 3
   /// A probe heard this clearly locks the level.
   public static let confidenceTarget = 0.9
   /// The input peak the lock aims for; louder than this (below clipping) still locks, with a warning.

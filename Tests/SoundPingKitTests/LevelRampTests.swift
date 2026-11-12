@@ -3,6 +3,44 @@ import Testing
 
 @testable import SoundPingKit
 
+/// Forwards to the simulator but makes the first `glitches` listening windows report lost frames
+/// (a jump in the callback sample times), as after a real overload. Only the probes are played in
+/// those windows, so the ramp is what meets them.
+private actor GlitchedWindowsBackend: AudioBackend {
+  private let inner: SimulatedBackend
+  private var remaining: Int
+  nonisolated let events: AsyncStream<DeviceEvent>
+
+  init(scenario: Scenario, glitches: Int) {
+    inner = SimulatedBackend(scenario: scenario)
+    remaining = glitches
+    events = inner.events
+  }
+
+  func open(_ setup: ResolvedSetup, templates: [StimulusTemplate]) async throws -> BackendInfo {
+    try await inner.open(setup, templates: templates)
+  }
+  func start() async throws -> BackendInfo { try await inner.start() }
+  func currentInputFrame() async -> Int64 { await inner.currentInputFrame() }
+  func currentOutputFrame() async -> Int64 { await inner.currentOutputFrame() }
+  func schedule(_ hits: [ScheduledHit]) async throws { try await inner.schedule(hits) }
+  func waitUntilCaptured(throughInputFrame frame: Int64) async throws {
+    try await inner.waitUntilCaptured(throughInputFrame: frame)
+  }
+  func capture(_ range: Range<Int64>) async throws -> [Float] { try await inner.capture(range) }
+  func stamps(covering range: Range<Int64>) async -> [CallbackStamp] {
+    var stamps = await inner.stamps(covering: range)
+    if remaining > 0, stamps.count >= 2 {
+      remaining -= 1
+      stamps[1].inputSampleTime += 4_096
+    }
+    return stamps
+  }
+  func stampLog() async -> StampLog { await inner.stampLog() }
+  func halHostTime(forInputSample sample: Double) async -> UInt64? { nil }
+  func stop() async { await inner.stop() }
+}
+
 /// The gentle auto-ramp and the checks around it (ENG-03, D-12, D-14): start at -48 dBFS, step up
 /// by 6 dB, never above the listener's ceiling, lock the level, and name the cause when the room
 /// is silent, clipping, muted or deaf.
@@ -517,6 +555,52 @@ import Testing
       error.context["fix"]?.isEmpty == false, "the hint names cable, permission, volume, gain")
     #expect(collected.probes.map(\.levelDbfs) == [-48, -42, -36, -30, -24, -18, -12, -6])
     #expect(!collected.tags.contains("armed"))
+  }
+
+  private static func runGlitched(glitches: Int, scenario: Scenario) async throws -> Collected {
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("soundping-test-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = RunStore(paths: try StorePaths.resolve(flag: folder.path, environment: [:]))
+    var parameters = RecipeRegistry.roundTrip.defaultParameters(seed: scenario.seed)
+    parameters.hits = 5
+    let request = RunRequest(
+      recipe: RecipeRegistry.roundTrip, parameters: parameters, setup: .simulatedDuplex)
+    let backend = GlitchedWindowsBackend(scenario: scenario, glitches: glitches)
+    var events: [RunEvent] = []
+    var thrown: SoundPingError?
+    do {
+      for try await event in RunCoordinator(backend: backend, store: store).run(request) {
+        events.append(event)
+      }
+    } catch {
+      thrown = error as? SoundPingError
+    }
+    return Collected(events: events, error: thrown)
+  }
+
+  @Test func aProbeSpoiltByAGlitchIsReplayedAtTheSameLevelNotStepped() async throws {
+    let collected = try await Self.runGlitched(
+      glitches: 2, scenario: Scenario(jitterFrames: 0, seed: 5))
+    #expect(collected.error == nil, "\(String(describing: collected.error))")
+    let levels = collected.probes.map(\.levelDbfs)
+    #expect(levels.count >= 3)
+    #expect(
+      levels.prefix(3).allSatisfy { $0 == -48 }, "two glitched probes, then a clean one: \(levels)")
+    #expect(collected.probes.prefix(2).allSatisfy { $0.confidence == 0 })
+    #expect(collected.result != nil)
+  }
+
+  @Test func theReplaysAreBoundedSoARunOfGlitchesStillEndsTheRamp() async throws {
+    let collected = try await Self.runGlitched(
+      glitches: 1_000, scenario: Scenario(jitterFrames: 0, pathGainDb: -80, seed: 5))
+    let error = try #require(collected.error)
+    #expect(error.code == "nothingHeardAtCeiling")
+    let levels = collected.probes.map(\.levelDbfs)
+    #expect(levels.allSatisfy { $0 <= -6 })
+    // Each level is played once plus its bounded replays.
+    let perLevel = 1 + LevelRamp.maxGlitchRetries
+    #expect(levels.count == 8 * perLevel, "\(levels.count)")
   }
 
   @Test func aZeroFramePathIsHeardAndMeasuredInsteadOfFailingThePreflight() async throws {

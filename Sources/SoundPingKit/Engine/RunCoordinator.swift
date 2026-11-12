@@ -320,6 +320,7 @@ private struct Session: Sendable {
     var player = ProbePlayer(backend: backend, template: template)
     var probes: [ProbeRecord] = []
     var level = ramp.firstLevel
+    var glitchRetries = 0
     while true {
       try Task.checkCancellation()
       let played = try await player.play(atLevel: level, using: &listener)
@@ -327,11 +328,19 @@ private struct Session: Sendable {
       probes.append(played.record)
       continuation.yield(.probe(played.record))
 
+      // A probe spoilt by an overload or a lost-frames gap did not fail to be heard, it was not
+      // judged: replay it at the same level instead of stepping up 6 dB (bounded, IN-01).
+      if played.glitched, glitchRetries < LevelRamp.maxGlitchRetries {
+        glitchRetries += 1
+        continue
+      }
+
       switch ramp.record(
         level: level, confidence: played.record.confidence, peakDbfs: played.record.peakDbfs)
       {
       case .probe(let next):
         level = next
+        glitchRetries = 0
       case .lock(let locked, let warning):
         if let warning { warnings.append(warning) }
         return LockedLevel(levelDbfs: locked, probes: probes, warnings: warnings)
