@@ -4,9 +4,9 @@ fixed_at: 2026-11-12T19:07:27Z
 review_path: .planning/phases/01-audio-round-trip/01-REVIEW.md
 iteration: 3
 findings_in_scope: 18
-fixed: 15
-skipped: 3
-status: partial
+fixed: 18
+skipped: 0
+status: all_fixed
 ---
 
 # Phase 01: Code Review Fix Report
@@ -18,14 +18,18 @@ status: partial
 **Summary (this iteration, against the second full review):**
 - Findings in scope: 18 (1 critical, 4 warning including IN-02 which was raised to Warning, 13 info; `fix_scope: all`, the maintainer asked for every finding)
 - Fixed: 15 (CR-03, WR-12, IN-02, IN-01, IN-03..IN-07, IN-09..IN-14), one commit each
-- Skipped: 3 (WR-01, WR-03, IN-08): deferred to planned change (maintainer decision). All three rework the real-time stamp and glitch recording in the IOProc, and go into a separate planned change right after this one. The RTState stamp ring, IOCycle stamping and the HitListener overload check were left alone beyond what the other findings strictly needed.
-- Ledger across all iterations: 26 findings fixed (11 in iterations 1 and 2: CR-01, CR-02, WR-02, WR-04..WR-11; 15 in iteration 3), 3 deferred (WR-01, WR-03, IN-08).
+- Skipped in iteration 3: 3 (WR-01, WR-03, IN-08), deferred to a planned change (maintainer decision) because all three rework the real-time stamp and glitch recording in the IOProc. **They were fixed afterwards in that planned change (quick task 261112-ql0)**: WR-03 in `836f3db`, WR-01 in `e9a3149`, IN-08 in both (stamp half and gap half). So `fixed` above counts them and nothing is skipped.
+- Ledger across all iterations: 29 findings fixed (11 in iterations 1 and 2: CR-01, CR-02, WR-02, WR-04..WR-11; 15 in iteration 3; 3 in the planned change: WR-01, WR-03, IN-08), 0 deferred.
 
 **Verification (iteration 3):**
 - **Where it ran:** an isolated worktree (`.claude/worktrees/rf-01-7932-1794509161`, branch `gsd-reviewfix/01-7932`). `swift build`, `swift test` and `scripts/ci-sim.sh` ran before every commit. Main had not moved (base `7d43c0e`), so the 15 commits were fast-forwarded as they are; the hashes below are final.
 - **Then once more in the main checkout** after the fast-forward: `swift build`, `swift test` (269 tests in the kit target, 44 in the CLI target) and `scripts/ci-sim.sh` (`ci-sim: OK`).
 - **Hardware:** `just hw-test` and `just bench` were NOT run, and no sound was played. One hardware test was added for IN-09 and run against the real HAL on this Mac (MacBook Pro speakers and microphone, `open` and `stop` only, no IO started): it fails without the fix and passes with it. Everything else on the HAL side (IN-03 stream formats, IN-05 refused listeners, the real device classification behind CR-03 and WR-12) is covered by the simulator, unit tests of the pure logic, or not at all, so those entries are marked "requires human verification".
 - `.planning/config.json` and `.planning/state.json` were never staged.
+
+**Verification (planned change, quick task 261112-ql0):**
+- `swift build`, `swift test` (291 tests in the kit target) and `scripts/ci-sim.sh` (`ci-sim: OK`) ran before each of the two commits, in an isolated worktree. `swift build` passing is also the proof that the IOProc path is still `@_noLocks`.
+- **Hardware:** `just hw-test` and `just bench` were NOT run and no sound was played. Everything that needs a real loop is marked "requires human verification" below.
 
 ## Fixed Issues
 
@@ -153,6 +157,46 @@ status: partial
 **Commit:** 4f097f8
 **Applied fix:** `defaults.templateId` is now explicitly `null`, next to a new `defaults.templateRule` ("follows the listener unless --template is given (chirp-loopback for a loop, chirp-speaker otherwise)"), so copying the advertised default into `--template` can no longer change behaviour. The `recipes --json` envelope is `schemaVersion` 2. The text listing says the rule too. This is a JSON contract change. The command's types are internal now so a test can encode them.
 
+**Planned change after iteration 3 (quick task 261112-ql0)**
+
+### WR-03: The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs
+
+**Status:** fixed: requires human verification (real-time stamping on a physical loop: the duplex I/O offset and `appRoundTrip` of a real interface must match a run recorded before the change)
+**Files modified:** `Sources/SoundPingKit/Audio/RTState.swift`, `Sources/SoundPingKit/Audio/IOCycle.swift`, `Sources/SoundPingKit/Audio/HALBackend.swift`, `Sources/SoundPingKit/Clock/DeviceTimeline.swift`, `Sources/SoundPingKit/Clock/ClockSelfTest.swift`, `Sources/SoundPingKit/Simulation/SimulatedBackend.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Tests/SoundPingKitTests/IOCycleTests.swift`, `Tests/SoundPingKitTests/ClockTests.swift`
+**Commit:** 836f3db
+**Applied fix:**
+- One stamp-ring entry per duplex callback: the entry holds the input side and the output side of that callback, and a side that was skipped or untimestamped leaves its half empty. `StampLog.ioOffsetFrames` is built from entries that have both sides, and `RunCoordinator` reads it for the I/O offset and `appRoundTrip` instead of zipping the two lists.
+- No ordinal pairing across two devices: an input device and a separate output device each write their own ring, `callbackStamps(covering:)` walks the input ring only and returns output fields of 0 when its entry has no output side, and `ioOffsetFrames` is empty on two devices.
+- The ring stays at 2^21 entries. `calloc` keeps untouched pages virtual, so a bigger ring is not the fix. Instead `ClockSelfTest.evaluate` judges only hits inside `DeviceTimeline.coveredSamples` (the callbacks the log still holds) and never extrapolates; when it judged fewer hits than were valid, `finish` adds a warning to the run's preflight warnings, so run.json says so. Chosen over resizing the ring from the run length because it is correct for any run length, with no tuning.
+- `ioCycle` is the single `@_noLocks` IOProc entry point; the HAL block calls only it. The two cycle helpers return their side and no longer append stamps.
+- Tests: a skipped output side (invalid time, zero-channel buffer) leaves 9 exact offsets of 10 callbacks; two devices never pair; a wrapped ring of 8 holds 8 exact offsets and refuses overwritten ordinals; a self-test over half a wrapped log judges exactly the hits inside it.
+- **Still needs hardware:** the unchanged duplex I/O offset median and `appRoundTrip` on a real interface, and `soundping selftest clock` passing with no self-test warning on a normal-length run.
+
+### WR-01: Overload rejection is racy and checks a single frame, not the lost interval
+
+**Status:** fixed: requires human verification (how late the HAL `'over'` notification arrives after a glitch, and the medians of surviving hits under forced overloads, need a physical loop)
+**Files modified:** `Sources/SoundPingKit/Audio/RTState.swift`, `Sources/SoundPingKit/Audio/IOCycle.swift`, `Sources/SoundPingKit/Audio/AudioBackend.swift`, `Sources/SoundPingKit/Audio/HALBackend.swift`, `Sources/SoundPingKit/Audio/DeviceListeners.swift`, `Sources/SoundPingKit/Simulation/SimulatedBackend.swift`, `Sources/SoundPingKit/Engine/HitListener.swift`, `Sources/SoundPingKit/Engine/RunCoordinator.swift`, `Sources/SoundPingKit/Engine/SoundPingError.swift`, `Sources/SoundPingKit/Preflight/ChannelProbe.swift`, `Sources/SoundPingKit/Preflight/ProbePlayer.swift`, `Tests/SoundPingKitTests/FaultRecordingTests.swift` (new), `Tests/SoundPingKitTests/IOCycleTests.swift`, and the five forwarding test backends
+**Commit:** e9a3149
+**Applied fix:**
+- Faults are intervals in the label space of the direction they hit, kept in four preallocated single-writer rings (input and output written by the IOProc, input and output overloads written only from the listeners' serial queue). Each gap, invalid-timestamp callback and overload is its own entry; nothing is merged. The IOProc appends a fault before the label store that follows it.
+- `AudioBackend.faults(overlappingInput:output:)` has no default implementation: an empty default would fail open. The HAL and simulated backends answer it, and the test backends forward it. A hit is rejected when any fault overlaps its input window or its played output frames (overlap, not containment).
+- The ring fails safe: once a ring has wrapped, a query reaching below its oldest entry gets one `logOverwritten` fault for that stretch, so overflow rejects hits rather than passing them.
+- The overload `DeviceEvent` and the stream-fed `FaultMonitor` are gone. `HitListener.listen` waits for the window plus a 20 ms settle margin (`faultSettleMs`, well under the 50 ms hit spacing), then queries the backend directly. No event-stream hop sits between a glitch and the reject decision.
+- The `'over'` handler calls `RTState.noteOverload`, which records `[next - lookback, next + buffer)` with a lookback of at least two buffers or 20 ms (`overloadLookbackMs`), in the labels of the device's own directions. An output device's overload lands in output labels, never on the input position (WR-01 item 4).
+- The output direction got the same label-continuity check as the input, so an output that skipped frames is a recorded fault too.
+- Tests: forward, repeated and backward jumps; invalid-timestamp faults in both directions; output jumps; overload mapping for capturing and output-only devices; overlap versus touching edges; the wrapped-ring fail-safe; and `HitListener` over a wrapper backend with a silent event stream (input fault, output fault, and a fault outside both ranges). The existing `overload@12` case still gives exactly one `discontinuity` rejection.
+- **Residual, accepted (T-ql0-06):** the primary, race-free signal is the IOProc's own label-continuity check. An overload that loses no frames leaves the labels intact and is only caught through the `'over'` notification, which needs the 20 ms margins to hold. **Still needs hardware:** measure how late `'over'` arrives on a real device; if it exceeds the margins, raise both constants.
+
+### IN-08: The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`
+
+**Status:** fixed: requires human verification (real driver flags; the tests use synthetic timestamps)
+**Files modified:** `Sources/SoundPingKit/Audio/IOCycle.swift`, `Sources/SoundPingKit/Audio/RTState.swift`, `Tests/SoundPingKitTests/IOCycleTests.swift`, `Tests/SoundPingKitTests/FaultRecordingTests.swift`
+**Commit:** 836f3db (stamp half), e9a3149 (gap half)
+**Applied fix:**
+- Stamp half: `mFlags` is read as raw bits (`sampleTimeValid` 1, `hostTimeValid` 2, `rateScalarValid` 4), not through `OptionSet.contains`, which `@_noLocks` may refuse. An input without `sampleTimeValid` captures nothing (its frames come back as a gap at the next valid callback); an output without it mixes nothing and moves no label. A side without `hostTimeValid` is captured or mixed and its label advances, but it is never logged, so a host time of 0 cannot reach `DeviceTimeline` or the self-test. Without `rateScalarValid` the side is logged with rate scalar 0, which `DeviceTimeline` already treats as 1.
+- Gap half: a callback with `sampleTimeValid` but no `hostTimeValid` records an `invalidTimestamp` fault for its frames in its own direction, so no hit is measured across a callback that cannot be timestamped.
+- Tests: the flag combinations on input and output through `ioCycle`, and the invalid-timestamp faults in both directions.
+
 **Iterations 1 and 2**
 
 These 11 entries are kept as they were so the disposition ledger carries over. Notes on what iteration 3 changed about them are marked "Since:".
@@ -267,23 +311,7 @@ These 11 entries are kept as they were so the disposition ledger carries over. N
 
 ## Skipped Issues
 
-### WR-01: Overload rejection is racy and checks a single frame, not the lost interval
-
-**File:** `Sources/SoundPingKit/Engine/HitListener.swift:5-17, 88-95`, `Sources/SoundPingKit/Audio/HALBackend.swift:455-489`, `Sources/SoundPingKit/Audio/DeviceListeners.swift:139-144`, `Sources/SoundPingKit/Audio/IOCycle.swift:54-71`
-**Reason:** deferred to planned change (maintainer decision). It is a real-time redesign (an interval ring in `RTState`, a new `AudioBackend` requirement, new semantics for HAL `'over'`) that goes into a separate planned change right after iteration 3, together with WR-03 and IN-08. Not touched in iteration 3.
-**Original issue:** the overload check can run before the supervisor has fed the monitor, tests a point instead of an interval, collapses several gaps into one event, and maps `'over'` to the wrong frame.
-
-### WR-03: The stamp log pairs input and output by array index, and the 2^21-entry ring wraps on long runs
-
-**File:** `Sources/SoundPingKit/Engine/RunCoordinator.swift:388`, `Sources/SoundPingKit/Audio/RTState.swift:119, 285-304`, `Sources/SoundPingKit/Audio/IOCycle.swift:33-46, 116-127`
-**Reason:** deferred to planned change (maintainer decision). The fix is a redesign of the real-time stamp log (one ring entry per duplex callback, no ordinal pairing for two devices, ring sized from the run length). Same separate planned change as WR-01 and IN-08. Not touched in iteration 3. Codex independently confirmed the pairing defect in the second review.
-**Original issue:** one skipped stamp in either direction shifts every later pair by a buffer, and 2^21 entries is exceeded by a 10 000-hit run.
-
-### IN-08: The IOProc stamps `mHostTime` and `mSampleTime` without checking `mFlags`
-
-**File:** `Sources/SoundPingKit/Audio/IOCycle.swift:85-87, 129-131`
-**Reason:** deferred to planned change (maintainer decision). It changes the IOProc's stamping in `IOCycle`, which the planned stamp and glitch redesign (WR-01, WR-03) rewrites; fixing it here would conflict with that. Not touched in iteration 3.
-**Original issue:** a timestamp without `kAudioTimeStampHostTimeValid` may carry host time 0; that point then enters the per-device least-squares fit and the self-test.
+None.
 
 ---
 
